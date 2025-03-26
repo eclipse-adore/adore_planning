@@ -37,6 +37,13 @@ namespace adore
 namespace planner
 {
 
+enum safety_corridor_drive_direction
+{
+  left,
+  right,
+  automatic
+};
+
 class SafetyCorridorPlanner
 {
 public:
@@ -67,24 +74,32 @@ public:
 
 private:
 
-  double lateral_weight            = 0.4;
-  double heading_weight            = 0.75;
+  double lateral_weight            = 0.8;
+  double heading_weight            = 0.0;
   double steering_weight           = 1.0;
   double wheelbase                 = 2.69;
   double max_forward_speed         = 13.6;
   double max_reverse_speed         = -2.0;
-  double max_steering_velocity     = 0.5;
-  double max_steering_acceleration = 1.5;
+  double max_steering_velocity     = 0.3;
+  double max_steering_acceleration = 0.5;
 
-  double reference_velocity = 3.0; // reference velocity of 3.0 m/s to start leaving the safety corridor
-  double car_previous_x;
-  double car_previous_y;
-  double distance_moved = 0.0;
-  bool   car_start      = true;
+  double                          reference_velocity = 3.0; // reference velocity of 3.0 m/s to start leaving the safety corridor
+  double                          car_previous_x;
+  double                          car_previous_y;
+  double                          distance_moved  = 0.0;
+  bool                            car_start       = true;
+  safety_corridor_drive_direction drive_direction = safety_corridor_drive_direction::automatic;
+
+  adore::math::Point2d              closest_intersection;
+  int                               closest_index = -1;
+  std::string                       relative_position;
+  std::vector<adore::math::Point2d> border_to_plan;
+  double                            lateral_distance_from_border = 1.2;
 
   double               bad_counter   = 0;
   bool                 bad_condition = false;
   dynamics::Trajectory previous_trajectory;
+  double               bad_output = 40.0;
 
   // Variables to convert route to piecewise polynomial function
   adore::math::PiecewisePolynomial                  pp;
@@ -93,9 +108,14 @@ private:
   adore::math::PiecewisePolynomial::PiecewiseStruct safety_corridor_heading;
 
   // Helper function to calculate position of car compared to border
-  bool findIntersection( const adore::math::Point2d& p1, const adore::math::Point2d& p2, const adore::math::Point2d& carPos, double heading,
-                         adore::math::Point2d& intersection );
-  std::string getRelativePosition( const adore::math::Point2d& p1, const adore::math::Point2d& p2, const adore::math::Point2d& carPos );
+  bool        find_intersection( const adore::math::Point2d& p1, const adore::math::Point2d& p2, const adore::math::Point2d& carPos,
+                                 double heading, adore::math::Point2d& intersection );
+  std::string get_relative_position( const adore::math::Point2d& p1, const adore::math::Point2d& p2, const adore::math::Point2d& carPos );
+
+  double get_border_parameters( const std::vector<adore::math::Point2d>& border, const dynamics::VehicleStateDynamic& current_state );
+
+  void drive_left( const std::vector<adore::math::Point2d>& border, const double& lateral_distance );
+  void drive_right( const std::vector<adore::math::Point2d>& border, const double& lateral_distance );
 
   // Variables for MPC solver configuration
   OptiNLC_Options options;
@@ -120,7 +140,9 @@ public:
   dynamics::VehicleCommandLimits limits;
 
   // Public method to get the next vehicle command based on SafetyCorridorPlanner
-  dynamics::Trajectory plan_trajectory( std::vector<adore::math::Point2d> border, const dynamics::VehicleStateDynamic& current_state );
+  dynamics::Trajectory plan_trajectory( const std::vector<adore::math::Point2d>& left_border,
+                                        const std::vector<adore::math::Point2d>& right_border,
+                                        const dynamics::VehicleStateDynamic&     current_state );
 
   void set_parameters( const std::map<std::string, double>& params );
 };

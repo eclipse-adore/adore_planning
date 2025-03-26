@@ -45,6 +45,8 @@ SafetyCorridorPlanner::set_parameters( const std::map<std::string, double>& para
       options.OptiNLC_ACC = value;
     if( name == "time_limit" )
       options.OptiNLC_time_limit = value;
+    if( name == "drive_direction_safety_corridor" )
+      drive_direction = static_cast<safety_corridor_drive_direction>( static_cast<int>( value ) );
   }
 }
 
@@ -120,43 +122,49 @@ SafetyCorridorPlanner::setup_objective_function( OptiNLC_OCP<double, input_size,
 
 // Public method to get the next vehicle command based on SafetyCorridorPlanner
 dynamics::Trajectory
-SafetyCorridorPlanner::plan_trajectory( std::vector<adore::math::Point2d> border, const dynamics::VehicleStateDynamic& current_state )
+SafetyCorridorPlanner::plan_trajectory( const std::vector<adore::math::Point2d>& left_border,
+                                        const std::vector<adore::math::Point2d>& right_border,
+                                        const dynamics::VehicleStateDynamic&     current_state )
 {
-  adore::math::Point2d closestIntersection;
-  double               minDistance  = std::numeric_limits<double>::max();
-  int                  closestIndex = -1;
-  std::string          relativePosition;
-  // Check each segment of the polyline
-  for( size_t i = 0; i < border.size() - 1; i++ )
+  switch( drive_direction )
   {
-    adore::math::Point2d intersection;
-    adore::math::Point2d p1;
-    p1.x = border[i].x;
-    p1.y = border[i].y;
-    adore::math::Point2d p2;
-    p2.x = border[i + 1].x;
-    p2.y = border[i + 1].y;
-    adore::math::Point2d carPosition;
-    carPosition.x = current_state.x;
-    carPosition.y = current_state.y;
-    if( findIntersection( p1, p2, carPosition, current_state.yaw_angle, intersection ) )
+    case safety_corridor_drive_direction::right:
     {
-      double distance = std::hypot( intersection.x - carPosition.x, intersection.y - carPosition.y );
-      if( distance < minDistance )
+      double right_distance = get_border_parameters( right_border, current_state );
+      drive_right( right_border, right_distance );
+      break;
+    }
+
+
+    case safety_corridor_drive_direction::left:
+    {
+      double left_distance = get_border_parameters( left_border, current_state );
+      drive_left( left_border, left_distance );
+      break;
+    }
+
+
+    case safety_corridor_drive_direction::automatic:
+    {
+      double left_distance  = get_border_parameters( left_border, current_state );
+      double right_distance = get_border_parameters( right_border, current_state );
+      if( left_distance < right_distance )
       {
-        minDistance         = distance;
-        closestIntersection = intersection;
-        closestIndex        = i + 1;
-        relativePosition    = getRelativePosition( p1, p2, carPosition );
+        double left_distance = get_border_parameters( left_border, current_state );
+        drive_left( left_border, left_distance );
+        drive_direction = safety_corridor_drive_direction::left;
+      }
+      else
+      {
+        double right_distance = get_border_parameters( right_border, current_state );
+        drive_right( right_border, right_distance );
+        drive_direction = safety_corridor_drive_direction::right;
       }
     }
   }
 
-  if( relativePosition == "right" && minDistance > 0.5 )
-  {
-    reference_velocity = 0.0;
-  }
-  if( distance_moved == 0.0 && car_start == true )
+  /////////////// Temporary for tuning ///////////////
+  if( car_start == true )
   {
     car_previous_x = current_state.x;
     car_previous_y = current_state.y;
@@ -164,19 +172,21 @@ SafetyCorridorPlanner::plan_trajectory( std::vector<adore::math::Point2d> border
   }
   distance_moved += std::sqrt( ( current_state.x - car_previous_x ) * ( current_state.x - car_previous_x )
                                + ( current_state.y - car_previous_y ) * ( current_state.y - car_previous_y ) );
-  car_previous_x  = current_state.x;
-  car_previous_y  = current_state.y;
+  std::cerr << "distance moved: " << distance_moved << std::endl;
+  car_previous_x = current_state.x;
+  car_previous_y = current_state.y;
+  /////////////// Temporary for tuning ///////////////
 
   std::vector<double> border_x;
   std::vector<double> border_y;
   std::vector<double> border_heading;
-  for( size_t i = 0; i < border.size() - closestIndex; i++ )
+  for( size_t i = 0; i < border_to_plan.size() - closest_index; i++ )
   {
-    border_x.push_back( border[i + closestIndex].x );
-    border_y.push_back( border[i + closestIndex].y );
+    border_x.push_back( border_to_plan[i + closest_index].x );
+    border_y.push_back( border_to_plan[i + closest_index].y );
   }
-  border_x.insert( border_x.begin(), closestIntersection.x );
-  border_y.insert( border_y.begin(), closestIntersection.y );
+  border_x.insert( border_x.begin(), closest_intersection.x );
+  border_y.insert( border_y.begin(), closest_intersection.y );
 
   std::vector<double> w;
   std::vector<double> progress;
@@ -243,10 +253,10 @@ SafetyCorridorPlanner::plan_trajectory( std::vector<adore::math::Point2d> border
   {
     bad_counter = 0;
   }
-  for( size_t i = 0; i < control_points / 2; i++ )
+  for( size_t i = 0; i < control_points; i++ )
   {
-    if( last_objective_function > 20.0 || opt_x[i * state_size + V] > max_forward_speed || opt_x[i * state_size + V] < max_reverse_speed
-        || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity )
+    if( last_objective_function > bad_output || opt_x[i * state_size + V] > max_forward_speed
+        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity + 0.1 )
     {
       bad_condition  = true;
       bad_counter   += 1;
@@ -301,7 +311,7 @@ SafetyCorridorPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, stat
 
     if( reference_velocity - state[V] > 0 )
     {
-      tau = 2.5; // Higher value for smooth acceleration
+      tau = 1.5; // Higher value for smooth acceleration
     }
     else
     {
@@ -331,7 +341,7 @@ SafetyCorridorPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, stat
     double cos_yaw = cos( reference_heading );
     double sin_yaw = sin( reference_heading );
 
-    double lateral_cost  = -dx * sin_yaw + dy * cos_yaw;
+    double lateral_cost  = -dx * sin_yaw + dy * cos_yaw + lateral_distance_from_border;
     lateral_cost        *= lateral_cost * lateral_weight;
 
     // Heading error term
@@ -355,8 +365,8 @@ SafetyCorridorPlanner::SafetyCorridorPlanner()
 }
 
 bool
-SafetyCorridorPlanner::findIntersection( const adore::math::Point2d& p1, const adore::math::Point2d& p2, const adore::math::Point2d& carPos,
-                                         double heading, adore::math::Point2d& intersection )
+SafetyCorridorPlanner::find_intersection( const adore::math::Point2d& p1, const adore::math::Point2d& p2,
+                                          const adore::math::Point2d& carPos, double heading, adore::math::Point2d& intersection )
 {
   // Direction vector along the car's heading
   double cosTheta = std::cos( heading );
@@ -391,18 +401,73 @@ SafetyCorridorPlanner::findIntersection( const adore::math::Point2d& p1, const a
   return true;
 }
 
+double
+SafetyCorridorPlanner::get_border_parameters( const std::vector<adore::math::Point2d>& border,
+                                              const dynamics::VehicleStateDynamic&     current_state )
+{
+  // Check each segment of the polyline
+  double min_distance = std::numeric_limits<double>::max();
+  for( size_t i = 0; i < border.size() - 1; i++ )
+  {
+    adore::math::Point2d intersection;
+    adore::math::Point2d p1;
+    p1.x = border[i].x;
+    p1.y = border[i].y;
+    adore::math::Point2d p2;
+    p2.x = border[i + 1].x;
+    p2.y = border[i + 1].y;
+    adore::math::Point2d car_position;
+    car_position.x = current_state.x;
+    car_position.y = current_state.y;
+    if( find_intersection( p1, p2, car_position, current_state.yaw_angle, intersection ) )
+    {
+      double distance = std::hypot( intersection.x - car_position.x, intersection.y - car_position.y );
+      if( distance < min_distance )
+      {
+        min_distance         = distance;
+        closest_intersection = intersection;
+        closest_index        = i + 1;
+        relative_position    = get_relative_position( p1, p2, car_position );
+      }
+    }
+  }
+  return min_distance;
+}
+
+void
+SafetyCorridorPlanner::drive_left( const std::vector<adore::math::Point2d>& border, const double& lateral_distance )
+{
+  if( relative_position == "left" && lateral_distance > 0.5 )
+  {
+    reference_velocity = 0.0;
+  }
+  border_to_plan               = border;
+  lateral_distance_from_border = -1.5;
+}
+
+void
+SafetyCorridorPlanner::drive_right( const std::vector<adore::math::Point2d>& border, const double& lateral_distance )
+{
+  if( relative_position == "right" && lateral_distance > 0.5 )
+  {
+    reference_velocity = 0.0;
+  }
+  border_to_plan               = border;
+  lateral_distance_from_border = 1.5;
+}
+
 std::string
-SafetyCorridorPlanner::getRelativePosition( const adore::math::Point2d& p1, const adore::math::Point2d& p2,
-                                            const adore::math::Point2d& carPos )
+SafetyCorridorPlanner::get_relative_position( const adore::math::Point2d& p1, const adore::math::Point2d& p2,
+                                              const adore::math::Point2d& carPos )
 {
   // Calculate the cross product
-  double crossProduct = ( p2.x - p1.x ) * ( carPos.y - p1.y ) - ( p2.y - p1.y ) * ( carPos.x - p1.x );
+  double cross_product = ( p2.x - p1.x ) * ( carPos.y - p1.y ) - ( p2.y - p1.y ) * ( carPos.x - p1.x );
 
-  if( crossProduct > 0 )
+  if( cross_product > 0 )
   {
     return "left";
   }
-  else if( crossProduct < 0 )
+  else if( cross_product < 0 )
   {
     return "right";
   }
