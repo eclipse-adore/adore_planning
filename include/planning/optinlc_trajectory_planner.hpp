@@ -98,7 +98,6 @@ private:
   double max_reverse_speed         = -2.0;
   double max_steering_velocity     = 0.5;
   double max_steering_acceleration = 1.5;
-  double near_goal_distance        = 50.0;
 
   double min_distance_in_route     = 0.1;
   double position_smoothing_factor = 0.9;
@@ -106,17 +105,12 @@ private:
   double threshold_bad_output      = 20.0; // value of cost function above which is considered bad
 
   // Curvature based velocity calculation members
-  double              maximum_velocity   = 5.0; // Maximum set velocity
-  double              reference_velocity = 5.0; // Reference velocity for planner
-  double              distance_moved     = 0.0;
-  std::vector<double> curvature_behind;
-  double              look_ahead_for_curvature  = 40.0; // 40 meters look ahead for curvature based speed reduction
-  double              look_behind_for_curvature = 10.0; // 10 meters look behind for curvature based speed reduction
-  double              curvature_weight          = 2.0;
-  int                 distance_to_add_behind    = 1;
-  double              distance_to_goal          = 100.0;
-  double              distance_to_object        = 0.0;
-  bool                within_lane               = true;
+  double maximum_velocity          = 5.0; // Maximum set velocity
+  double reference_velocity        = 5.0; // Reference velocity for planner
+  double lookahead_time            = 3.0; // 3 seconds lookahead for curvature
+  int    safe_index                = 10;  // safe index for curvature
+  double lateral_acceleration      = 1.0; // max lateral acceleration 1.0 m/s²
+  double minimum_velocity_in_curve = 2.0; // min velocity in a curve 2 m/s²
 
   // IDM related members
   double min_distance_to_vehicle_ahead = 10.0; // 10 meters minimum gap to vehicle in front
@@ -126,6 +120,9 @@ private:
   double max_deceleration              = 2.5;  // Maximum deceleration 2.5 m/s²
   double velocity_error_gain           = 1.25; // gain for adjusting reference velocity
   double tau                           = 2.5;  // first order velocity profile
+  double distance_to_goal              = 100.0;
+  double distance_to_object            = 0.0;
+  bool   within_lane                   = true;
 
   // Variables to store previous commands
   double               last_steering_angle = 0.0;
@@ -156,11 +153,10 @@ private:
   void setup_reference_route( route_to_piecewise_polynomial& reference_route );
 
   // Helper function to get reference velocity
-  void                setup_reference_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
-                                                const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants );
-  double              calculate_idm_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
-                                              const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants );
-  std::vector<double> calculate_curvature( const std::vector<adore::math::Point2d>& path );
+  void   setup_reference_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
+                                   const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants );
+  double calculate_idm_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
+                                 const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants );
 
   // Helper function to set up the solver and solve the problem
   bool solve_mpc( OptiNLC_OCP<double, input_size, state_size, constraints_size, control_points>& ocp,

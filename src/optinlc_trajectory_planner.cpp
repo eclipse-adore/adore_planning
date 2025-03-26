@@ -43,10 +43,6 @@ OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& p
       maximum_velocity = value;
     if( name == "min_distance_to_vehicle_ahead" )
       min_distance_to_vehicle_ahead = value;
-    if( name == "look_ahead_for_curvature" )
-      look_ahead_for_curvature = value;
-    if( name == "look_behind_for_curvature" )
-      look_behind_for_curvature = value;
   }
 }
 
@@ -333,7 +329,7 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::m
     }
   }
 
-  if( route_to_follow.s.size() < 3 )
+  if( route_to_follow.s.size() < 3 ) // safety check for route
   {
     return route;
   }
@@ -368,51 +364,28 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
                                                     const map::Map&                        latest_map,
                                                     const dynamics::TrafficParticipantSet& traffic_participants )
 {
-  std::vector<adore::math::Point2d> path_for_curvature;
-  for( int i = 0; i < look_ahead_for_curvature; i++ )
-  {
-    adore::math::Point2d point_for_curvature;
-    int                  index = pp.findIndex( i, route_x );
-    point_for_curvature.x      = pp.splineEvaluation( index, i, route_x );
-    point_for_curvature.y      = pp.splineEvaluation( index, i, route_y );
-    path_for_curvature.push_back( point_for_curvature );
-  }
+  reference_velocity = maximum_velocity;
+  int index          = pp.findIndex( lookahead_time * current_state.vx, route_x );
+  index              = std::max( index, safe_index );
 
+  // Curvature calculation using heading
+  std::vector<double> psi, dpsi; // heading and derivative
   std::vector<double> curvature;
-  if( path_for_curvature.size() < 3 )
-  {
-    std::cerr << "invalid path received for calculating curvature" << std::endl;
-    return;
-  }
-  for( size_t i = 0; i < path_for_curvature.size() - 2; i++ )
-  {
-    curvature.push_back( adore::math::compute_curvature( path_for_curvature[i].x, path_for_curvature[i].y, path_for_curvature[i + 1].x,
-                                                         path_for_curvature[i + 1].y, path_for_curvature[i + 2].x,
-                                                         path_for_curvature[i + 2].y ) );
-  }
-  distance_moved += current_state.vx * dt;
-  if( distance_moved > distance_to_add_behind )
-  {
-    curvature_behind.push_back( curvature[0] );
-    distance_to_add_behind += 1;
-  }
+  pp.CubicSplineEvaluation( psi, dpsi, route_to_follow.s, route_heading );
 
-  if( curvature_behind.size() > look_behind_for_curvature )
+  for( int i = 0; i < index; i++ )
   {
-    curvature_behind.erase( curvature_behind.begin() );
+    curvature.push_back( std::abs( dpsi[i] / ( route_to_follow.s[i + 1] - route_to_follow.s[i] ) ) );
   }
-  std::vector<double> total_curvature = curvature_behind;
-
-  total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
-
-  double max_curvature = *std::max_element( total_curvature.begin(), total_curvature.end() );
-  reference_velocity   = maximum_velocity / ( 1 + curvature_weight * max_curvature );
+  double max_curvature      = *std::max_element( curvature.begin(), curvature.end() );
+  double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
+  reference_velocity        = std::min( reference_velocity, curvature_velocity );
 
   double idm_velocity = calculate_idm_velocity( latest_route, current_state, latest_map, traffic_participants );
   reference_velocity  = std::min( reference_velocity, idm_velocity );
 
   // dynamic reference velocity adjusting based on the error the reference and current velocity
-  reference_velocity = reference_velocity + velocity_error_gain * ( reference_velocity - current_state.vx );
+  // reference_velocity = reference_velocity + velocity_error_gain * ( reference_velocity - current_state.vx );
 
   double min_dist = std::numeric_limits<double>::max();
   auto   nearest  = latest_map.quadtree.get_nearest_point( current_state, min_dist );
@@ -455,27 +428,21 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
 
   double distance_for_idm = std::min( distance_to_object_min, distance_to_goal );
 
-  if( distance_to_goal < distance_to_object_min && distance_to_goal < near_goal_distance )
+  if( distance_to_goal < distance_to_object_min )
   {
     distance_to_maintain_ahead = wheelbase / 2;
   }
 
   double s_star = distance_to_maintain_ahead + current_state.vx * desired_time_headway
                 + current_state.vx * ( current_state.vx - front_vehicle_velocity ) / ( 2 * sqrt( max_acceleration * max_deceleration ) );
-  idm_velocity = current_state.vx
+  double velocity_ratio = current_state.vx / maximum_velocity;
+  idm_velocity          = current_state.vx
                + max_acceleration
-                   * ( 1
-                       - ( current_state.vx / maximum_velocity ) * ( current_state.vx / maximum_velocity )
-                           * ( current_state.vx / maximum_velocity ) * ( current_state.vx / maximum_velocity )
+                   * ( 1 - velocity_ratio * velocity_ratio * velocity_ratio * velocity_ratio
                        - ( s_star / distance_for_idm ) * ( s_star / distance_for_idm ) );
-  if( idm_velocity < 0.0 )
-  {
-    idm_velocity = 0.0;
-  }
-  if( idm_velocity > maximum_velocity )
-  {
-    idm_velocity = maximum_velocity;
-  }
+
+  idm_velocity = std::max( 0.0, std::min( idm_velocity, max_forward_speed ) ); // clamping idm velocity from 0 to max speed allowed
+
   return idm_velocity;
 }
 
