@@ -12,6 +12,7 @@
  *    Giovanni Lucente
  ********************************************************************************/
 #include "planning/dynamic_game_planner.hpp"
+#include "dynamics/vehicle_state.hpp"
 
 #include <iostream>
 
@@ -31,9 +32,10 @@ DynamicGamePlanner::~DynamicGamePlanner() {
     std::cout << "DynamicGamePlanner destroyed." << std::endl;
 }
 
-void DynamicGamePlanner::run(TrafficParticipants& traffic_state) {
+void DynamicGamePlanner::run( dynamics::TrafficParticipantSet& traffic_participant_set_ ) {
     
-    traffic = traffic_state;
+    traffic_participant_set = traffic_participant_set_;
+    //traffic = traffic_state;
 
     // Variables initialization and setup:
     setup();
@@ -53,6 +55,51 @@ void DynamicGamePlanner::run(TrafficParticipants& traffic_state) {
 }
 
 void DynamicGamePlanner::setup() {
+    
+    // populate traffic 
+    for (int i = 0; i < traffic_participant_set.participants.size(); i++)
+    {
+        auto state = traffic_participant_set.participants[i].state;
+        double speed = std::sqrt(state.vx * state.vx + state.vy * state.vy);
+        double slip_angle = std::atan2(state.vy, state.vx);
+        double v_target = 6.0;
+
+        VehicleState vehicle_state(state.x, state.y, speed, state.yaw_angle, slip_angle, state.ax, v_target);
+        
+        // populate center lanes
+        if (traffic_participant_set.participants[i].route.has_value())
+        {
+            auto route = traffic_participant_set.participants[i].route.value();
+            std::vector<double> x_vals, y_vals, s_vals;
+
+            for (int i = 0; i < route.center_lane.size(); i++)
+            {
+                x_vals.push_back(route.center_lane[i].x);
+                y_vals.push_back(route.center_lane[i].y);
+                s_vals.push_back(route.center_lane[i].s);
+            }
+            vehicle_state.centerlane.initialize_spline(x_vals, y_vals, s_vals);
+        }else
+        {
+            // create dummy route
+            int centerlane_length = 50;
+
+            std::vector<double> x_vals, y_vals, s_vals;
+
+            for (int j = 0; j < centerlane_length; j++) {
+                 
+                x_vals.push_back(vehicle_state.x + std::cos(vehicle_state.psi) * j * 5.0); 
+                y_vals.push_back(vehicle_state.y + std::sin(vehicle_state.psi) * j * 5.0);
+                s_vals.push_back(j * 5.0);
+            }
+            vehicle_state.centerlane.initialize_spline(x_vals, y_vals, s_vals);
+            
+            // set target speed = 0.0 (since there is no route)
+            vehicle_state.v_target = 0.0;
+        }
+        
+        traffic.push_back(vehicle_state);
+    }
     
     // Setup number of traffic participants:
     M = traffic.size();

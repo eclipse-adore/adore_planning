@@ -19,6 +19,7 @@
 #include "adore_map/map.hpp"
 #include "adore_math/spline.h"
 
+#include "dynamics/traffic_participant.hpp"
 #include "dynamics/trajectory.hpp"
 #include "dynamics/vehicle_state.hpp"
 
@@ -87,11 +88,12 @@ public:
     enum INPUTS {d, F};
 
     TrafficParticipants traffic;
+    dynamics::TrafficParticipantSet traffic_participant_set;
 
     DynamicGamePlanner();  // Constructor
     ~DynamicGamePlanner(); // Destructor
 
-    void run( TrafficParticipants& traffic_state );                                  /** Main method to execute the planner */
+    void run( dynamics::TrafficParticipantSet& traffic_participant_set );          /** Main method to execute the planner */
     void setup();                                                                  /** Setup function */
     void initial_guess(double* X, double* U);                                      /** Set the initial guess */
     void trust_region_solver(double* U_);                                          /** solver of the dynamic game based on trust region */
