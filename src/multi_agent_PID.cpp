@@ -152,26 +152,26 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   //    Sum up repulsive “virtual velocities” for all obstacles, then
   //    project onto vehicle coords for adjustments in steering & acceleration.
   //    (compute_obstacle_avoidance_speed_component_errors is your existing method.)
-  auto speed_component_errors = compute_obstacle_avoidance_speed_component_errors( current_state, traffic_participant_set, id );
+  // auto speed_component_errors = compute_obstacle_avoidance_speed_component_errors( current_state, traffic_participant_set, id );
 
-  double avoidance_steering     = 0.0;
-  double avoidance_acceleration = 0.0;
+  // double avoidance_steering     = 0.0;
+  // double avoidance_acceleration = 0.0;
 
-  // If offset is within lane bounds, try to avoid obstacles via fluid model
-  if( std::abs( offset ) < 0.5 * lane_width && closest_obstacle_distance > 2.0 )
-  {
-    // "speed_component_errors" => (longitudinal_speed_error, lateral_speed_error)
-    double longitudinal_speed_error = speed_component_errors.first;
-    double lateral_speed_error      = speed_component_errors.second;
+  // // If offset is within lane bounds, try to avoid obstacles via fluid model
+  // if( std::abs( offset ) < 0.5 * lane_width && closest_obstacle_distance > 2.0 )
+  // {
+  //   // "speed_component_errors" => (longitudinal_speed_error, lateral_speed_error)
+  //   double longitudinal_speed_error = speed_component_errors.first;
+  //   double lateral_speed_error      = speed_component_errors.second;
 
-    // Gains for fluid repulsion (example new params: k_repulsion_lat, k_repulsion_long)
-    avoidance_acceleration = k_obstacle_avoidance_longitudinal * longitudinal_speed_error;
-    avoidance_steering     = k_obstacle_avoidance_lateral * lateral_speed_error;
-  }
+  //   // Gains for fluid repulsion (example new params: k_repulsion_lat, k_repulsion_long)
+  //   avoidance_acceleration = k_obstacle_avoidance_longitudinal * longitudinal_speed_error;
+  //   avoidance_steering     = k_obstacle_avoidance_lateral * lateral_speed_error;
+  // }
 
-  // 7. Merge lane-following with obstacle-avoidance
-  vehicle_command.acceleration   += avoidance_acceleration;
-  vehicle_command.steering_angle += avoidance_steering;
+  // // 7. Merge lane-following with obstacle-avoidance
+  // vehicle_command.acceleration   += avoidance_acceleration;
+  // vehicle_command.steering_angle += avoidance_steering;
 
   // // 8. (Optional) Lane-center “pull” that weakens if obstacles are near
   // double lane_center_gain = 1.0; // example
