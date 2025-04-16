@@ -377,7 +377,21 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
   {
     curvature.push_back( std::abs( dpsi[i] / ( route_to_follow.s[i + 1] - route_to_follow.s[i] ) ) );
   }
-  double max_curvature      = *std::max_element( curvature.begin(), curvature.end() );
+  distance_moved += current_state.vx * dt;
+  if( distance_moved > distance_to_add_behind )
+  {
+    curvature_behind.push_back( curvature[0] );
+    distance_to_add_behind += 1;
+  }
+
+  if( curvature_behind.size() > look_behind_for_curvature )
+  {
+    curvature_behind.erase( curvature_behind.begin() );
+  }
+  std::vector<double> total_curvature = curvature_behind;
+
+  total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
+  double max_curvature      = *std::max_element( total_curvature.begin(), total_curvature.end() );
   double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
   reference_velocity        = std::min( reference_velocity, curvature_velocity );
 
@@ -402,7 +416,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
                                                   const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants )
 {
   double distance_to_object_min     = std::numeric_limits<double>::max();
-  double distance_to_maintain_ahead = min_distance_to_vehicle_ahead;
+  double distance_to_maintain_ahead = min_distance_to_vehicle_ahead + wheelbase / 2;
   double idm_velocity               = maximum_velocity;
   double state_s                    = latest_route.get_s( current_state );
 
@@ -420,6 +434,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
 
     if( within_lane && distance_to_object < distance_to_object_min )
     {
+      front_vehicle_velocity = participant.state.vx;
       distance_to_object_min = distance_to_object;
     }
   }
@@ -430,7 +445,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
 
   if( distance_to_goal < distance_to_object_min )
   {
-    distance_to_maintain_ahead = wheelbase / 2;
+    distance_to_maintain_ahead = wheelbase;
   }
 
   double s_star = distance_to_maintain_ahead + current_state.vx * desired_time_headway

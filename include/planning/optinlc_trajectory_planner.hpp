@@ -105,12 +105,16 @@ private:
   double threshold_bad_output      = 20.0; // value of cost function above which is considered bad
 
   // Curvature based velocity calculation members
-  double maximum_velocity          = 5.0; // Maximum set velocity
-  double reference_velocity        = 5.0; // Reference velocity for planner
-  double lookahead_time            = 3.0; // 3 seconds lookahead for curvature
-  int    safe_index                = 10;  // safe index for curvature
-  double lateral_acceleration      = 1.0; // max lateral acceleration 1.0 m/s²
-  double minimum_velocity_in_curve = 2.0; // min velocity in a curve 2 m/s²
+  double              maximum_velocity   = 5.0; // Maximum set velocity
+  double              reference_velocity = 5.0; // Reference velocity for planner
+  double              lookahead_time     = 3.0; // 3 seconds lookahead for curvature
+  double              distance_moved     = 0.0;
+  std::vector<double> curvature_behind;
+  double              look_behind_for_curvature = 3.0; // 3 meters look behind for curvature based speed reduction
+  int                 distance_to_add_behind    = 1;
+  int                 safe_index                = 10;  // safe index for curvature
+  double              lateral_acceleration      = 1.0; // max lateral acceleration 1.0 m/s²
+  double              minimum_velocity_in_curve = 2.0; // min velocity in a curve 2 m/s²
 
   // IDM related members
   double min_distance_to_vehicle_ahead = 10.0; // 10 meters minimum gap to vehicle in front
@@ -121,8 +125,6 @@ private:
   double velocity_error_gain           = 1.25; // gain for adjusting reference velocity
   double tau                           = 2.5;  // first order velocity profile
   double distance_to_goal              = 100.0;
-  double distance_to_object            = 0.0;
-  bool   within_lane                   = true;
 
   // Variables to store previous commands
   double               last_steering_angle = 0.0;
