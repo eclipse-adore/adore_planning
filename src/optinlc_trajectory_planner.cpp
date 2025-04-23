@@ -169,7 +169,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   for( size_t i = 0; i < control_points; i++ )
   {
     if( last_objective_function > threshold_bad_output || opt_x[i * state_size + V] > max_forward_speed
-        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity )
+        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity + 0.1 )
     {
       bad_condition  = true;
       bad_counter   += 1;
@@ -368,38 +368,37 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
   int index          = pp.findIndex( lookahead_time * current_state.vx, route_x );
   index              = std::max( index, safe_index );
 
-  // Curvature calculation using heading
-  std::vector<double> psi, dpsi; // heading and derivative
+  // Curvature calculation
   std::vector<double> curvature;
-  pp.CubicSplineEvaluation( psi, dpsi, route_to_follow.s, route_heading );
-
-  for( int i = 0; i < index; i++ )
+  if( route_to_follow.s.size() > index + 2 )
   {
-    curvature.push_back( std::abs( dpsi[i] / ( route_to_follow.s[i + 1] - route_to_follow.s[i] ) ) );
-  }
-  distance_moved += current_state.vx * dt;
-  if( distance_moved > distance_to_add_behind )
-  {
-    curvature_behind.push_back( curvature[0] );
-    distance_to_add_behind += 1;
-  }
+    for( int i = 0; i < index; i++ )
+    {
+      double kappa = adore::math::compute_curvature( route_to_follow.x[i], route_to_follow.y[i], route_to_follow.x[i + 1],
+                                                     route_to_follow.y[i + 1], route_to_follow.x[i + 2], route_to_follow.y[i + 2] );
+      curvature.push_back( std::abs( kappa ) );
+    }
+    distance_moved += current_state.vx * dt;
+    if( distance_moved > distance_to_add_behind )
+    {
+      curvature_behind.push_back( curvature[0] );
+      distance_to_add_behind += 1;
+    }
 
-  if( curvature_behind.size() > look_behind_for_curvature )
-  {
-    curvature_behind.erase( curvature_behind.begin() );
-  }
-  std::vector<double> total_curvature = curvature_behind;
+    if( curvature_behind.size() > look_behind_for_curvature )
+    {
+      curvature_behind.erase( curvature_behind.begin() );
+    }
+    std::vector<double> total_curvature = curvature_behind;
 
-  total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
-  double max_curvature      = *std::max_element( total_curvature.begin(), total_curvature.end() );
-  double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
-  reference_velocity        = std::min( reference_velocity, curvature_velocity );
+    total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
+    double max_curvature      = *std::max_element( total_curvature.begin(), total_curvature.end() );
+    double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
+    reference_velocity        = std::min( reference_velocity, curvature_velocity );
+  }
 
   double idm_velocity = calculate_idm_velocity( latest_route, current_state, latest_map, traffic_participants );
   reference_velocity  = std::min( reference_velocity, idm_velocity );
-
-  // dynamic reference velocity adjusting based on the error the reference and current velocity
-  // reference_velocity = reference_velocity + velocity_error_gain * ( reference_velocity - current_state.vx );
 
   double min_dist = std::numeric_limits<double>::max();
   auto   nearest  = latest_map.quadtree.get_nearest_point( current_state, min_dist );
@@ -420,18 +419,36 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
   double idm_velocity               = maximum_velocity;
   double state_s                    = latest_route.get_s( current_state );
 
-
   for( const auto& [id, participant] : traffic_participants.participants )
   {
     math::Point2d object_position;
-    object_position.x          = participant.state.x;
-    object_position.y          = participant.state.y;
-    double distance_to_object  = latest_route.get_s( object_position );
-    double offset              = math::distance_2d( object_position, latest_route.get_pose_at_s( distance_to_object ) );
-    auto   map_point           = latest_route.get_map_point_at_s( distance_to_object );
-    bool   within_lane         = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
-    distance_to_object        -= state_s;
-
+    object_position.x                        = participant.state.x;
+    object_position.y                        = participant.state.y;
+    math::Point2d object_position_predicted  = object_position;
+    double        distance_to_object         = latest_route.get_s( object_position );
+    double        offset                     = math::distance_2d( object_position, latest_route.get_pose_at_s( distance_to_object ) );
+    auto          map_point                  = latest_route.get_map_point_at_s( distance_to_object );
+    bool          within_lane                = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
+    distance_to_object                      -= state_s;
+    if( !within_lane )
+    {
+      distance_to_object = std::numeric_limits<double>::max();
+    }
+    for( int i = 0; i < prediction_horizon; i++ )
+    {
+      object_position_predicted.x          = object_position_predicted.x + participant.state.vx * dt * cos( participant.state.yaw_angle );
+      object_position_predicted.y          = object_position_predicted.y + participant.state.vx * dt * sin( participant.state.yaw_angle );
+      double distance_to_object_predicted  = latest_route.get_s( object_position_predicted );
+      double offset    = math::distance_2d( object_position_predicted, latest_route.get_pose_at_s( distance_to_object_predicted ) );
+      auto   map_point = latest_route.get_map_point_at_s( distance_to_object_predicted );
+      bool   within_lane_predicted = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
+      distance_to_object_predicted        -= state_s;
+      if( within_lane_predicted && distance_to_object_predicted < distance_to_object )
+      {
+        distance_to_object = distance_to_object_predicted;
+        within_lane        = true;
+      }
+    }
     if( within_lane && distance_to_object < distance_to_object_min )
     {
       front_vehicle_velocity = participant.state.vx;
