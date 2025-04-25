@@ -118,6 +118,15 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       next_state.ax             = vehicle_command.acceleration;
       next_state.steering_angle = vehicle_command.steering_angle;
 
+      if( traffic_participant_set.validity_area )
+      {
+        if( traffic_participant_set.validity_area->point_inside( next_state ) )
+        {
+          continue;
+        }
+      }
+
+
       participant.trajectory->states.push_back( next_state );
     }
   }
@@ -164,9 +173,9 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   //   double longitudinal_speed_error = speed_component_errors.first;
   //   double lateral_speed_error      = speed_component_errors.second;
 
-  //   // Gains for fluid repulsion (example new params: k_repulsion_lat, k_repulsion_long)
-  //   avoidance_acceleration = k_obstacle_avoidance_longitudinal * longitudinal_speed_error;
-  //   avoidance_steering     = k_obstacle_avoidance_lateral * lateral_speed_error;
+  // // Gains for fluid repulsion (example new params: k_repulsion_lat, k_repulsion_long)
+  // avoidance_acceleration = k_obstacle_avoidance_longitudinal * longitudinal_speed_error;
+  // avoidance_steering     = k_obstacle_avoidance_lateral * lateral_speed_error;
   // }
 
   // // 7. Merge lane-following with obstacle-avoidance
