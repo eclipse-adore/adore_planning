@@ -97,7 +97,7 @@ private:
   double max_forward_speed         = 13.6;
   double max_reverse_speed         = -2.0;
   double max_steering_velocity     = 0.5;
-  double max_steering_acceleration = 0.25;
+  double max_steering_acceleration = 0.5;
 
   double min_distance_in_route     = 0.1;
   double position_smoothing_factor = 0.9;
@@ -107,7 +107,7 @@ private:
   // Curvature based velocity calculation members
   double              maximum_velocity   = 5.0; // Maximum set velocity
   double              reference_velocity = 5.0; // Reference velocity for planner
-  double              lookahead_time     = 3.0; // 3 seconds lookahead for curvature
+  double              lookahead_time     = 4.0; // 4 seconds lookahead for curvature
   double              distance_moved     = 0.0;
   std::vector<double> curvature_behind;
   double              look_behind_for_curvature = 3.0; // 3 meters look behind for curvature based speed reduction

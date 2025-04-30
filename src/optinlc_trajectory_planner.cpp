@@ -22,7 +22,7 @@ void
 OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& params )
 {
   options.intermediateIntegration = 2;
-  options.OptiNLC_ACC             = 1e-4;
+  options.OptiNLC_ACC             = 1e-3;
   options.maxNumberOfIteration    = 500;
   options.OSQP_verbose            = false;
   options.OSQP_max_iter           = 500;
@@ -319,7 +319,7 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::m
     if( s - state_s > maximum_required_road_length )
       break;
     double local_progress = s - state_s;
-    if( local_progress - previous_s > 0.75 ) // adding points every 75 cm
+    if( local_progress - previous_s > 0.1 ) // adding points every 10 cm
     {
       route_to_follow.s.push_back( local_progress );
       route_to_follow.x.push_back( point.x );
