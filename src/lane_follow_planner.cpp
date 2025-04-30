@@ -75,7 +75,7 @@ LaneFollowPlanner::generate_trajectory_from_route( const dynamics::VehicleStateD
   }
 
   // Apply the spline into the start
-  spline_into_start( current_state, filtered_points );
+  // spline_into_start( current_state, filtered_points );
 
   if( filtered_points.size() < 2 )
   {
