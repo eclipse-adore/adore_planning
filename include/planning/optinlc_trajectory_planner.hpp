@@ -68,8 +68,8 @@ public:
 
   static constexpr int    state_size       = 8;
   static constexpr int    input_size       = 1;
-  static constexpr int    control_points   = 30;
-  static constexpr double sim_time         = 3.0; // Simulation time for the Planner
+  static constexpr int    control_points   = 60;
+  static constexpr double sim_time         = 6.0; // Simulation time for the Planner
   static constexpr int    constraints_size = 0;
 
 
