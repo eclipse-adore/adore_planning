@@ -456,6 +456,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
     }
   }
 
+  std::cerr << "Distnace to nearest object: " << distance_to_object_min     << std::endl;
   distance_to_goal = latest_route.get_length() - state_s;
 
   double distance_for_idm = std::min( distance_to_object_min, distance_to_goal );
