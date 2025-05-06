@@ -22,7 +22,7 @@ void
 OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& params )
 {
   options.intermediateIntegration = 2;
-  options.OptiNLC_ACC             = 1e-4;
+  options.OptiNLC_ACC             = 1e-3;
   options.maxNumberOfIteration    = 500;
   options.OSQP_verbose            = false;
   options.OSQP_max_iter           = 500;
@@ -126,6 +126,10 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
 
   // Initial state and input
   VECTOR<double, input_size> initial_input = { 0.0 };
+  if (current_state.vx < 0.25)
+  {
+    steering_rate = 0.0;
+  }
   VECTOR<double, state_size> initial_state = {
     current_state.x, current_state.y, current_state.yaw_angle, current_state.vx, current_state.steering_angle, 0.0, 0.0, 0.0
   };
@@ -169,7 +173,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   for( size_t i = 0; i < control_points; i++ )
   {
     if( last_objective_function > threshold_bad_output || opt_x[i * state_size + V] > max_forward_speed
-        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity + 0.1 )
+        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity )
     {
       bad_condition  = true;
       bad_counter   += 1;
@@ -207,10 +211,12 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   {
     previous_trajectory = planned_trajectory;
     bad_counter         = 0;
+    steering_rate = planned_trajectory.states[1].steering_rate;
     return planned_trajectory;
   }
   else
   {
+    steering_rate = previous_trajectory.states[1].steering_rate;
     return previous_trajectory;
   }
 }
@@ -319,7 +325,7 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::m
     if( s - state_s > maximum_required_road_length )
       break;
     double local_progress = s - state_s;
-    if( local_progress - previous_s > 0.75 ) // adding points every 75 cm
+    if( local_progress - previous_s > 0.1 ) // adding points every 75 cm
     {
       route_to_follow.s.push_back( local_progress );
       route_to_follow.x.push_back( point.x );
@@ -365,7 +371,7 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
                                                     const dynamics::TrafficParticipantSet& traffic_participants )
 {
   reference_velocity = maximum_velocity;
-  int index          = pp.findIndex( lookahead_time * current_state.vx, route_x );
+  int index          = pp.findIndex( lookahead_time * 5.0, route_x );
   index              = std::max( index, safe_index );
 
   // Curvature calculation
@@ -394,6 +400,9 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
     total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
     double max_curvature      = *std::max_element( total_curvature.begin(), total_curvature.end() );
     double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
+    curvature_velocity = std::min(curvature_velocity, maximum_velocity);
+    double a = (curvature_velocity - current_state.vx) / 2.0;
+    curvature_velocity = std::max(current_state.vx + a, minimum_velocity_in_curve);
     reference_velocity        = std::min( reference_velocity, curvature_velocity );
   }
 
@@ -408,6 +417,7 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
     double current_route_point_max_speed = latest_map.get_lane_speed_limit( nearest.value().parent_id );
     reference_velocity                   = std::min( reference_velocity, current_route_point_max_speed );
   }
+  std::cerr << "reference velocity: " << reference_velocity << std::endl;
 }
 
 double
@@ -428,7 +438,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
     double        distance_to_object         = latest_route.get_s( object_position );
     double        offset                     = math::distance_2d( object_position, latest_route.get_pose_at_s( distance_to_object ) );
     auto          map_point                  = latest_route.get_map_point_at_s( distance_to_object );
-    bool          within_lane                = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
+    bool          within_lane                = offset < (latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s ) / 2);
     distance_to_object                      -= state_s;
     if( !within_lane )
     {
@@ -441,28 +451,30 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
       double distance_to_object_predicted  = latest_route.get_s( object_position_predicted );
       double offset    = math::distance_2d( object_position_predicted, latest_route.get_pose_at_s( distance_to_object_predicted ) );
       auto   map_point = latest_route.get_map_point_at_s( distance_to_object_predicted );
-      bool   within_lane_predicted = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
+      bool   within_lane_predicted = offset < (latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s ) / 2);
       distance_to_object_predicted        -= state_s;
       if( within_lane_predicted && distance_to_object_predicted < distance_to_object )
       {
-        distance_to_object = distance_to_object_predicted;
+        //distance_to_object = distance_to_object_predicted;
         within_lane        = true;
       }
     }
-    if( within_lane && distance_to_object < distance_to_object_min )
+    if( within_lane && distance_to_object < distance_to_object_min && distance_to_object > 0 )
     {
       front_vehicle_velocity = participant.state.vx;
       distance_to_object_min = distance_to_object;
     }
   }
+  std::cerr << "distance to object: " << distance_to_object_min << std::endl;
 
   distance_to_goal = latest_route.get_length() - state_s;
+  std::cerr << "distance to goal: " << distance_to_goal << std::endl;
 
   double distance_for_idm = std::min( distance_to_object_min, distance_to_goal );
 
   if( distance_to_goal < distance_to_object_min )
   {
-    distance_to_maintain_ahead = wheelbase;
+    distance_to_maintain_ahead = 5.0;
   }
 
   double s_star = distance_to_maintain_ahead + current_state.vx * desired_time_headway

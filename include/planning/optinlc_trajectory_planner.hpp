@@ -97,7 +97,7 @@ private:
   double max_forward_speed         = 13.6;
   double max_reverse_speed         = -2.0;
   double max_steering_velocity     = 0.5;
-  double max_steering_acceleration = 0.25;
+  double max_steering_acceleration = 0.5;
 
   double min_distance_in_route     = 0.1;
   double position_smoothing_factor = 0.9;
@@ -130,6 +130,7 @@ private:
   double               last_steering_angle = 0.0;
   double               last_acceleration   = 0.0;
   double               bad_counter         = 0;
+  double steering_rate = 1.0;
   bool                 bad_condition       = false;
   dynamics::Trajectory previous_trajectory;
 
