@@ -444,21 +444,21 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
     {
       distance_to_object = std::numeric_limits<double>::max();
     }
-    for( int i = 0; i < prediction_horizon; i++ )
-    {
-      object_position_predicted.x          = object_position_predicted.x + participant.state.vx * dt * cos( participant.state.yaw_angle );
-      object_position_predicted.y          = object_position_predicted.y + participant.state.vx * dt * sin( participant.state.yaw_angle );
-      double distance_to_object_predicted  = latest_route.get_s( object_position_predicted );
-      double offset    = math::distance_2d( object_position_predicted, latest_route.get_pose_at_s( distance_to_object_predicted ) );
-      auto   map_point = latest_route.get_map_point_at_s( distance_to_object_predicted );
-      bool   within_lane_predicted = offset < (latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s ) / 2);
-      distance_to_object_predicted        -= state_s;
-      if( within_lane_predicted && distance_to_object_predicted < distance_to_object )
-      {
-        //distance_to_object = distance_to_object_predicted;
-        within_lane        = true;
-      }
-    }
+    // for( int i = 0; i < prediction_horizon; i++ )
+    // {
+    //   object_position_predicted.x          = object_position_predicted.x + participant.state.vx * dt * cos( participant.state.yaw_angle );
+    //   object_position_predicted.y          = object_position_predicted.y + participant.state.vx * dt * sin( participant.state.yaw_angle );
+    //   double distance_to_object_predicted  = latest_route.get_s( object_position_predicted );
+    //   double offset    = math::distance_2d( object_position_predicted, latest_route.get_pose_at_s( distance_to_object_predicted ) );
+    //   auto   map_point = latest_route.get_map_point_at_s( distance_to_object_predicted );
+    //   bool   within_lane_predicted = offset < (latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s ) / 2);
+    //   distance_to_object_predicted        -= state_s;
+    //   if( within_lane_predicted && distance_to_object_predicted < distance_to_object )
+    //   {
+    //     //distance_to_object = distance_to_object_predicted;
+    //     within_lane        = true;
+    //   }
+    // }
     if( within_lane && distance_to_object < distance_to_object_min && distance_to_object > 0 )
     {
       front_vehicle_velocity = participant.state.vx;
