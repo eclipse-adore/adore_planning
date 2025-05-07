@@ -156,6 +156,7 @@ private:
   void setup_reference_route( route_to_piecewise_polynomial& reference_route );
 
   // Helper function to get reference velocity
+  std::vector<double> compute_curvatures( const dynamics::VehicleStateDynamic& current_state );
   void   setup_reference_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                    const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants );
   double calculate_idm_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,

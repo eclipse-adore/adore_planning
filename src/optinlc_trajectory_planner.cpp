@@ -365,6 +365,68 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::m
   return route;
 }
 
+std::vector<double>
+OptiNLCTrajectoryPlanner::compute_curvatures( const dynamics::VehicleStateDynamic& current_state )
+{
+  int n          = pp.findIndex( lookahead_time * current_state.vx, route_x );
+  n              = std::max( n, safe_index );
+  std::vector<double> curvatures( n, 0.0 );
+
+  // Compute curvature using a larger window size for robustness against noise
+  if( route_to_follow.s.size() > n )
+  {
+    for( size_t i = 2; i < n - 2; ++i ) // Adjust the window size here
+    {
+      // Average positions in a larger window to reduce noise sensitivity
+      double x1 = ( route_to_follow.x[i - 2] + route_to_follow.x[i - 1] ) / 2.0;
+      double y1 = ( route_to_follow.y[i - 2] + route_to_follow.y[i - 1] ) / 2.0;
+      double x2 = route_to_follow.x[i];
+      double y2 = route_to_follow.y[i];
+      double x3 = ( route_to_follow.x[i + 1] + route_to_follow.x[i + 2] ) / 2.0;
+      double y3 = ( route_to_follow.y[i + 1] + route_to_follow.y[i + 2] ) / 2.0;
+
+      double kappa  = adore::math::compute_curvature( x1, y1, x2, y2, x3, y3 );
+      curvatures[i] = std::abs( kappa );
+    }
+  }
+
+  // Handle boundary points by copying neighboring values
+  if( n > 4 )
+  {
+    curvatures[0]     = curvatures[2];
+    curvatures[1]     = curvatures[2];
+    curvatures[n - 1] = curvatures[n - 3];
+    curvatures[n - 2] = curvatures[n - 3];
+  }
+  else
+  {
+    curvatures[0] = 0.0;
+    if( n > 1 )
+      curvatures[1] = 0.0;
+  }
+
+  // Apply a simple moving average filter to smooth the computed curvatures
+  std::vector<double> smoothed_curvatures( n, 0.0 );
+  const int           smoothing_window = 8; // Adjust window size for desired smoothing level
+  for( size_t i = 0; i < n; ++i )
+  {
+    double sum   = 0.0;
+    int    count = 0;
+    for( int j = -smoothing_window; j <= smoothing_window; ++j )
+    {
+      int index = i + j;
+      if( index >= 0 && static_cast<size_t>( index ) < n )
+      {
+        sum += curvatures[index];
+        ++count;
+      }
+    }
+    smoothed_curvatures[i] = sum / count;
+  }
+
+  return smoothed_curvatures;
+}
+
 void
 OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                                     const map::Map&                        latest_map,
@@ -378,12 +440,13 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
   std::vector<double> curvature;
   if( route_to_follow.s.size() > index + 2 )
   {
-    for( int i = 0; i < index; i++ )
-    {
-      double kappa = adore::math::compute_curvature( route_to_follow.x[i], route_to_follow.y[i], route_to_follow.x[i + 1],
-                                                     route_to_follow.y[i + 1], route_to_follow.x[i + 2], route_to_follow.y[i + 2] );
-      curvature.push_back( std::abs( kappa ) );
-    }
+    // for( int i = 0; i < index; i++ )
+    // {
+    //   double kappa = adore::math::compute_curvature( route_to_follow.x[i], route_to_follow.y[i], route_to_follow.x[i + 1],
+    //                                                  route_to_follow.y[i + 1], route_to_follow.x[i + 2], route_to_follow.y[i + 2] );
+    //   curvature.push_back( std::abs( kappa ) );
+    // }
+    curvature = compute_curvatures( current_state );
     distance_moved += current_state.vx * dt;
     if( distance_moved > distance_to_add_behind )
     {
