@@ -537,7 +537,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
 
   if( distance_to_goal < distance_to_object_min )
   {
-    distance_to_maintain_ahead = 5.0;
+    distance_to_maintain_ahead = 3.0;
   }
 
   double s_star = distance_to_maintain_ahead + current_state.vx * desired_time_headway
