@@ -56,17 +56,16 @@ public:
     PSI,
     V,
     DELTA,
-    dDELTA,
     S,
     L
   };
 
   enum CONTROLS
   {
-    ddDELTA
+    dDELTA
   };
 
-  static constexpr int    state_size       = 8;
+  static constexpr int    state_size       = 7;
   static constexpr int    input_size       = 1;
   static constexpr int    control_points   = 30;
   static constexpr double sim_time         = 3.0; // Simulation time for the Planner
@@ -101,19 +100,19 @@ private:
 
   double min_distance_in_route     = 0.1;
   double position_smoothing_factor = 0.9;
-  double heading_smoothing_factor  = 0.9;
+  double heading_smoothing_factor  = 0.75;
   double threshold_bad_output      = 20.0; // value of cost function above which is considered bad
 
   // Curvature based velocity calculation members
   double              maximum_velocity   = 5.0; // Maximum set velocity
   double              reference_velocity = 5.0; // Reference velocity for planner
-  double              lookahead_time     = 3.0; // 3 seconds lookahead for curvature
+  double              lookahead_time     = 4.0; // 3 seconds lookahead for curvature
   double              distance_moved     = 0.0;
   std::vector<double> curvature_behind;
   double              look_behind_for_curvature = 3.0; // 3 meters look behind for curvature based speed reduction
   int                 distance_to_add_behind    = 1;
   int                 safe_index                = 10;  // safe index for curvature
-  double              lateral_acceleration      = 1.0; // max lateral acceleration 1.0 m/s²
+  double              lateral_acceleration      = 0.75; // max lateral acceleration 1.0 m/s²
   double              minimum_velocity_in_curve = 1.5; // min velocity in a curve 2 m/s²
 
   // IDM related members
@@ -131,6 +130,7 @@ private:
   double               last_acceleration   = 0.0;
   double               bad_counter         = 0;
   double steering_rate = 1.0;
+  int iteration = 0;
   bool                 bad_condition       = false;
   dynamics::Trajectory previous_trajectory;
 

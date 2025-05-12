@@ -21,7 +21,7 @@ namespace planner
 void
 OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& params )
 {
-  options.intermediateIntegration = 2;
+  options.intermediateIntegration = 3;
   options.OptiNLC_ACC             = 1e-3;
   options.maxNumberOfIteration    = 500;
   options.OSQP_verbose            = false;
@@ -52,7 +52,7 @@ OptiNLCTrajectoryPlanner::setup_constraints( OptiNLC_OCP<double, input_size, sta
 
   // Define a simple input update method
   ocp.setInputUpdate( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& input, double, void* ) {
-    VECTOR<double, input_size> update_input = { input[ddDELTA] };
+    VECTOR<double, input_size> update_input = { input[dDELTA] };
     return update_input;
   } );
 
@@ -62,7 +62,7 @@ OptiNLCTrajectoryPlanner::setup_constraints( OptiNLC_OCP<double, input_size, sta
     state_constraints.setConstant( -std::numeric_limits<double>::infinity() );
     state_constraints[V]      = max_reverse_speed;
     state_constraints[DELTA]  = -limits.max_steering_angle;
-    state_constraints[dDELTA] = -max_steering_velocity;
+    //state_constraints[dDELTA] = -max_steering_velocity;
     return state_constraints;
   } );
 
@@ -71,20 +71,20 @@ OptiNLCTrajectoryPlanner::setup_constraints( OptiNLC_OCP<double, input_size, sta
     state_constraints.setConstant( std::numeric_limits<double>::infinity() );
     state_constraints[V]      = max_forward_speed;
     state_constraints[DELTA]  = limits.max_steering_angle;
-    state_constraints[dDELTA] = max_steering_velocity;
+    //state_constraints[dDELTA] = max_steering_velocity;
     return state_constraints;
   } );
 
   // Input Constraints
   ocp.setUpdateInputLowerBounds( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, input_size> input_constraints;
-    input_constraints[ddDELTA] = -max_steering_acceleration;
+    input_constraints[dDELTA] = -max_steering_velocity;
     return input_constraints;
   } );
 
   ocp.setUpdateInputUpperBounds( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, input_size> input_constraints;
-    input_constraints[ddDELTA] = max_steering_acceleration;
+    input_constraints[dDELTA] = max_steering_velocity;
     return input_constraints;
   } );
 
@@ -125,13 +125,13 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   auto                          start_time      = std::chrono::high_resolution_clock::now();
 
   // Initial state and input
-  VECTOR<double, input_size> initial_input = { 0.0 };
   if (current_state.vx < 0.25)
   {
     steering_rate = 0.0;
   }
+  VECTOR<double, input_size> initial_input = { current_state.steering_rate };
   VECTOR<double, state_size> initial_state = {
-    current_state.x, current_state.y, current_state.yaw_angle, current_state.vx, current_state.steering_angle, 0.0, 0.0, 0.0
+    current_state.x, current_state.y, current_state.yaw_angle, current_state.vx, current_state.steering_angle, 0.0, 0.0
   };
 
   // Create an MPC problem (OCP)
@@ -162,6 +162,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   solver.solve( current_state.time, initial_state, initial_input );
 
   auto   opt_x                   = solver.get_optimal_states();
+  auto   opt_u                   = solver.get_optimal_inputs();
   auto   time                    = solver.getTime();
   double last_objective_function = solver.get_final_objective_function();
 
@@ -173,7 +174,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   for( size_t i = 0; i < control_points; i++ )
   {
     if( last_objective_function > threshold_bad_output || opt_x[i * state_size + V] > max_forward_speed
-        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity )
+        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_u[i * input_size + dDELTA] ) > max_steering_velocity )
     {
       bad_condition  = true;
       bad_counter   += 1;
@@ -190,7 +191,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     state.yaw_angle      = opt_x[i * state_size + PSI];
     state.vx             = opt_x[i * state_size + V];
     state.steering_angle = opt_x[i * state_size + DELTA];
-    state.steering_rate  = opt_x[i * state_size + dDELTA];
+    state.steering_rate  = opt_u[i * input_size + dDELTA];
     state.time           = time[i];
     if( i < control_points - 1 )
     {
@@ -205,12 +206,12 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   // Calculate time taken
   auto                          end_time        = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed_seconds = end_time - start_time;
-
   // Log cost, time taken, and convergence status
-  if( bad_condition == false && bad_counter < 5 )
+  if( bad_condition == false && bad_counter < 5 || iteration == 0 )
   {
     previous_trajectory = planned_trajectory;
     bad_counter         = 0;
+    iteration = 1;
     steering_rate = planned_trajectory.states[1].steering_rate;
     return planned_trajectory;
   }
@@ -234,21 +235,20 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
     {
       tau = 1.25; // Lower value for quick braking
     }
+    // Reference trajectory point at current progress
+    int    index             = pp.findIndex( state[S], route_x );
+    double reference_x       = pp.splineEvaluation( index, state[S], route_x );
+    double reference_y       = pp.splineEvaluation( index, state[S], route_y );
+    double reference_heading = pp.splineEvaluation( index, state[S], route_heading );
 
     // Dynamic model equations
     derivative[X]      = state[V] * cos( state[PSI] );                      // X derivative (velocity * cos(psi))
     derivative[Y]      = state[V] * sin( state[PSI] );                      // Y derivative (velocity * sin(psi))
     derivative[PSI]    = state[V] * tan( state[DELTA] ) / wheelbase;        // PSI derivative (steering angle / wheelbase)
     derivative[V]      = ( 1.0 / tau ) * ( reference_velocity - state[V] ); // Velocity derivative (first order)
-    derivative[DELTA]  = state[dDELTA];                                     // Steering angle derivative
-    derivative[dDELTA] = input[ddDELTA];                                    // Steering angle rate derivative
+    derivative[DELTA]  = input[dDELTA];                                     // Steering angle derivative
     derivative[S]      = state[V];                                          // Progress derivate (velocity)
 
-    // Reference trajectory point at current progress
-    int    index             = pp.findIndex( state[S], route_x );
-    double reference_x       = pp.splineEvaluation( index, state[S], route_x );
-    double reference_y       = pp.splineEvaluation( index, state[S], route_y );
-    double reference_heading = pp.splineEvaluation( index, state[S], route_heading );
 
     // Position error terms
     double dx = state[X] - reference_x;
@@ -368,7 +368,7 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::m
 std::vector<double>
 OptiNLCTrajectoryPlanner::compute_curvatures( const dynamics::VehicleStateDynamic& current_state )
 {
-  int n          = pp.findIndex( lookahead_time * current_state.vx, route_x );
+  int n          = pp.findIndex( lookahead_time * 5.0, route_x );
   n              = std::max( n, safe_index );
   std::vector<double> curvatures( n, 0.0 );
 
@@ -407,7 +407,7 @@ OptiNLCTrajectoryPlanner::compute_curvatures( const dynamics::VehicleStateDynami
 
   // Apply a simple moving average filter to smooth the computed curvatures
   std::vector<double> smoothed_curvatures( n, 0.0 );
-  const int           smoothing_window = 8; // Adjust window size for desired smoothing level
+  const int           smoothing_window = 3; // Adjust window size for desired smoothing level
   for( size_t i = 0; i < n; ++i )
   {
     double sum   = 0.0;
@@ -433,7 +433,7 @@ OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_rou
                                                     const dynamics::TrafficParticipantSet& traffic_participants )
 {
   reference_velocity = maximum_velocity;
-  int index          = pp.findIndex( lookahead_time * 5.0, route_x );
+  int index          = pp.findIndex( lookahead_time * current_state.vx, route_x );
   index              = std::max( index, safe_index );
 
   // Curvature calculation
