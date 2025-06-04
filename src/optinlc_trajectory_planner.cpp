@@ -429,13 +429,18 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
     double distance_to_object  = latest_route.get_s( object_position );
     double offset              = math::distance_2d( object_position, latest_route.get_pose_at_s( distance_to_object ) );
     auto   map_point           = latest_route.get_map_point_at_s( distance_to_object );
-    bool   within_lane         = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
-    distance_to_object        -= state_s;
 
-    if( within_lane && distance_to_object < distance_to_object_min )
+
+    if (latest_map.lanes.count(map_point.parent_id) != 0)
     {
-      front_vehicle_velocity = participant.state.vx;
-      distance_to_object_min = distance_to_object;
+      bool   within_lane         = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
+      distance_to_object        -= state_s;
+
+      if( within_lane && distance_to_object < distance_to_object_min )
+      {
+        front_vehicle_velocity = participant.state.vx;
+        distance_to_object_min = distance_to_object;
+      }
     }
   }
 
