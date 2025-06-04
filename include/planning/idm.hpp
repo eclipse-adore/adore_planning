@@ -9,19 +9,18 @@ namespace idm
 {
 
 static double
-calculate_idm_acc( double distance_to_goal, double distance_to_object, double max_speed, double desired_time_headway,
-                   double distance_to_maintain, double current_speed, double max_acceleration, double vehicle_velocity )
+calculate_idm_acc( double dist_goal, double dist_object, double max_speed, double time_headway, double dist_headway, double current_speed,
+                   double max_acc, double speed_object )
 
 {
-  double distance_for_idm = std::min( distance_to_object, distance_to_goal );
+  double distance_for_idm = std::min( dist_object, dist_goal );
 
 
-  double s_star = distance_to_maintain + current_speed * desired_time_headway
-                + current_speed * ( current_speed - vehicle_velocity ) / ( 2 * sqrt( max_acceleration ) );
+  double s_star = dist_headway + current_speed * time_headway + current_speed * ( current_speed - speed_object ) / ( 2 * sqrt( max_acc ) );
 
   double velocity_ratio = current_speed / max_speed;
 
-  return max_acceleration
+  return max_acc
        * ( 1 - velocity_ratio * velocity_ratio * velocity_ratio * velocity_ratio
            - ( s_star / distance_for_idm ) * ( s_star / distance_for_idm ) );
 }

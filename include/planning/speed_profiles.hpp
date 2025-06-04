@@ -41,13 +41,16 @@ struct SpeedProfile
   double get_speed_at_s( double s ) const;
 
   void generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                             const map::Map& local_map, double initial_speed, double max_speed,
-                                             double max_lateral_acceleration, double desired_time_headway, double start_s, double length );
+                                             double initial_speed, double initial_s, double max_lateral_acceleration,
+                                             double desired_time_headway, double length );
 
-  std::map<double, double> calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double start_s,
-                                                       double length, double max_curvature );
 
   SpeedProfile() {};
+
+  double                              max_allowed_speed = 13.7; // 50 km/h in m/s, can be adjusted based on vehicle parameters
+  dynamics::PhysicalVehicleParameters vehicle_params;
+  double                              desired_time_headway = 3.0; // seconds
+  double                              distance_headway     = 3.0; // meters, safety distance ( after vehicle length )
 
   // Overloading the << operator
   friend std::ostream&
@@ -62,6 +65,11 @@ struct SpeedProfile
   }
 
 private:
+
+  std::map<double, double>  calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
+                                                        double length, double max_curvature = 0.5 );
+  std::pair<double, double> get_nearest_object_info(
+    double s_curr, const std::unordered_map<int, std::map<double, double>>& predicted_trajectories ) const;
 
   std::unordered_map<int, std::map<double, double>> predict_traffic_participant_trajectories(
     const dynamics::TrafficParticipantSet& traffic_participants, const map::Route& route, double prediction_horizon = 10.0,

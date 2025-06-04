@@ -11,7 +11,6 @@
  * Contributors:
  *    Marko Mizdrak
  ********************************************************************************/
-#pragma once
 
 #include "planning/speed_profiles.hpp"
 
@@ -59,10 +58,12 @@ SpeedProfile::predict_traffic_participant_trajectories( const dynamics::TrafficP
     double accumulated_time = 0.0;
     while( accumulated_time <= prediction_horizon )
     {
-      trajectory[accumulated_time]  = current_s + current_velocity * accumulated_time;
-      accumulated_time             += time_step;
+      double predicted_s       = current_s + current_velocity * accumulated_time;
+      trajectory[predicted_s]  = current_velocity;
+      accumulated_time        += time_step;
     }
-    predicted_trajectories[id] = trajectory;
+
+    predicted_trajectories[id] = std::move( trajectory );
   }
 
   return predicted_trajectories;
@@ -70,28 +71,26 @@ SpeedProfile::predict_traffic_participant_trajectories( const dynamics::TrafficP
 
 void
 SpeedProfile::generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                                    const map::Map& local_map, double initial_speed, double max_speed,
-                                                    double max_lateral_acceleration, double desired_time_headway, double start_s,
-                                                    double length )
+                                                    double initial_speed, double initial_s, double max_lateral_acceleration,
+                                                    double desired_time_headway, double length )
 {
   // Clear previous speed profile
   s_to_speed.clear();
 
   // Compute curvature-based speed limits
-  std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, start_s, length, 0.5 );
+  std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, initial_s, length );
 
   // Precompute Traffic Participant Trajectories
   auto predicted_trajectories = predict_traffic_participant_trajectories( traffic_participants, route );
 
   // Initialize starting conditions
-  s_to_speed[start_s] = initial_speed;
+  s_to_speed[initial_s] = initial_speed;
 
-  auto it     = route.center_lane.lower_bound( start_s );
-  auto end_it = route.center_lane.upper_bound( start_s + length );
+  auto it     = route.center_lane.lower_bound( initial_s );
+  auto end_it = route.center_lane.upper_bound( initial_s + length );
 
   if( it == route.center_lane.end() )
   {
-    std::cerr << "No route points found after start_s" << std::endl;
     return;
   }
 
@@ -99,38 +98,43 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
   auto prev_it = it;
   ++it;
 
+  double safety_distance  = distance_headway + vehicle_params.wheelbase + vehicle_params.front_axle_to_front_border;
+  double max_acceleration = vehicle_params.acceleration_max;
+  double max_deceleration = -vehicle_params.acceleration_min;
   for( ; it != end_it; ++it, ++prev_it )
   {
-    double s_prev = prev_it->first;
-    double s_curr = it->first;
 
-    double delta_s = s_curr - s_prev;
+    double s_prev                        = prev_it->first;
+    double s_curr                        = it->first;
+    double delta_s                       = s_curr - s_prev;
+    auto [object_distance, object_speed] = get_nearest_object_info( s_curr, predicted_trajectories );
 
-    // Lookup the max speed at the current point
-    double max_curvature_speed = s_to_curvature.count( s_curr ) ? s_to_curvature.at( s_curr ) : max_speed;
-    double max_reachable_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_lateral_acceleration * delta_s );
+    double max_curvature_speed = s_to_curvature.count( s_curr ) ? s_to_curvature.at( s_curr ) : max_allowed_speed;
+    double max_legal_speed     = it->second.max_speed ? *it->second.max_speed : max_allowed_speed;
+    double max_current_speed   = std::min( { max_curvature_speed, max_legal_speed } );
 
-    double idm_acc = idm::calculate_idm_acc( route.get_length() - s_curr, 100, max_curvature_speed, 5.0, 5.0, s_to_speed[s_prev], 2.0,
-                                             1.0 );
+    double idm_acc = idm::calculate_idm_acc( route.get_length() - s_curr, object_distance, max_current_speed, desired_time_headway,
+                                             safety_distance, s_to_speed[s_prev], max_acceleration, object_speed );
 
     // Compute speed limits
     double idm_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * idm_acc * delta_s );
 
-    // Directly update in the map
-    s_to_speed[s_curr] = std::min( { max_reachable_speed, idm_speed, max_curvature_speed } );
+    double max_reachable_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_acceleration * delta_s );
+
+    s_to_speed[s_curr] = std::min( { max_reachable_speed, idm_speed } );
   }
 
   // Backward Pass (Smoothing and Enforcing Deceleration Limits)
   auto current_it  = std::prev( end_it );
   auto previous_it = std::prev( current_it );
 
-  while( previous_it != route.center_lane.lower_bound( start_s ) )
+  while( previous_it != route.center_lane.lower_bound( initial_s ) )
   {
     double s_prev  = previous_it->first;
     double s_curr  = current_it->first;
     double delta_s = s_curr - s_prev;
 
-    double max_reachable_speed = std::sqrt( s_to_speed[s_curr] * s_to_speed[s_curr] + 2.0 * max_lateral_acceleration * delta_s );
+    double max_reachable_speed = std::sqrt( s_to_speed[s_curr] * s_to_speed[s_curr] + 2.0 * max_deceleration * delta_s );
 
     if( s_to_speed[s_prev] > max_reachable_speed )
     {
@@ -148,7 +152,7 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
 }
 
 std::map<double, double>
-SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double start_s, double length,
+SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s, double length,
                                           double max_curvature )
 {
   std::map<double, double> s_to_curvature;
@@ -160,8 +164,8 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
   }
 
   // Get the boundaries for the route segment
-  auto begin_it = std::next( route.center_lane.lower_bound( start_s ) );
-  auto end_it   = route.center_lane.upper_bound( start_s + length );
+  auto begin_it = std::next( route.center_lane.lower_bound( initial_s ) );
+  auto end_it   = route.center_lane.upper_bound( initial_s + length );
 
   // Iterate over the route with a sliding window of 3 points
   for( auto it = begin_it; std::next( it ) != end_it; ++it )
@@ -181,6 +185,35 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
 
   return s_to_curvature;
 }
+
+std::pair<double, double>
+SpeedProfile::get_nearest_object_info( double                                                   s_curr,
+                                       const std::unordered_map<int, std::map<double, double>>& predicted_trajectories ) const
+{
+  double object_distance = std::numeric_limits<double>::max();
+  double object_speed    = 0.0; // Will only be set if we find an object
+
+  for( const auto& [id, trajectory] : predicted_trajectories )
+  {
+    auto it = trajectory.lower_bound( s_curr );
+    if( it == trajectory.end() )
+      continue;
+
+    double predicted_s = it->first;
+    if( predicted_s > s_curr )
+    {
+      double distance = predicted_s - s_curr;
+      if( distance < object_distance )
+      {
+        object_distance = distance;
+        object_speed    = it->second;
+      }
+    }
+  }
+
+  return { object_distance, object_speed };
+}
+
 
 } // namespace planner
 } // namespace adore
