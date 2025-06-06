@@ -38,14 +38,25 @@ struct SpeedProfile
 {
   std::map<double, double> s_to_speed;
 
+  using MapPointIter = std::map<double, adore::map::MapPoint>::const_iterator;
+
   double get_speed_at_s( double s ) const;
+  double get_acc_at_s( double s ) const;
 
   void generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
                                              double initial_speed, double initial_s, double max_lateral_acceleration,
                                              double desired_time_headway, double length );
 
+  void backward_pass( MapPointIter& previous_it, const adore::map::Route& route, double initial_s, MapPointIter& current_it,
+                      double length );
+
+  void forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it,
+                     std::unordered_map<int, std::map<double, double>>& predicted_trajectories, std::map<double, double>& s_to_curvature,
+                     const adore::map::Route& route );
+
 
   SpeedProfile() {};
+
 
   double                              max_allowed_speed = 13.7; // 50 km/h in m/s, can be adjusted based on vehicle parameters
   dynamics::PhysicalVehicleParameters vehicle_params;
@@ -65,6 +76,10 @@ struct SpeedProfile
   }
 
 private:
+
+  double max_deceleration;
+  double max_acceleration;
+  double safety_distance;
 
   std::map<double, double>  calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
                                                         double length, double max_curvature = 0.5 );

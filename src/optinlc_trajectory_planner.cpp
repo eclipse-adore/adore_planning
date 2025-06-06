@@ -28,10 +28,6 @@ OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& p
   {
     if( name == "wheel_base" )
       wheelbase = value;
-    if( name == "lateral_weight" )
-      lateral_weight = value;
-    if( name == "heading_weight" )
-      heading_weight = value;
   }
 }
 
@@ -105,29 +101,19 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
 {
   ocp.setDynamicModel( [&]( const VECTOR<double, state_size>& state, const VECTOR<double, input_size>& input,
                             VECTOR<double, state_size>& derivative, double, void* ) {
-    double ref_v = speed_profile.get_speed_at_s( state[S] + 1.0 );
-    // double ref_v = 5.0;
-    double tau = ( ref_v > state[V] ) ? 2.5 : 1.25;
-
     derivative[X]     = state[V] * cos( state[PSI] );
     derivative[Y]     = state[V] * sin( state[PSI] );
     derivative[PSI]   = state[V] * tan( state[DELTA] ) / wheelbase;
-    derivative[V]     = ( 1.0 / tau ) * ( ref_v - state[V] );
+    derivative[V]     = speed_profile.get_acc_at_s( state[S] );
     derivative[DELTA] = input[dDELTA];
     derivative[S]     = state[V];
 
     auto ref_pose = route.get_pose_at_s( state[S] + 1.0 );
 
-    double dx      = state[X] - ref_pose.x;
-    double dy      = state[Y] - ref_pose.y;
-    double psi_ref = ref_pose.yaw;
-    double cos_psi = cos( psi_ref );
-    double sin_psi = sin( psi_ref );
+    double dx = state[X] - ref_pose.x;
+    double dy = state[Y] - ref_pose.y;
 
-    double lateral_error = -dx * sin_psi + dy * cos_psi;
-    double heading_error = adore::math::normalize_angle( state[PSI] - psi_ref );
-
-    derivative[L] = lateral_weight * lateral_error * lateral_error; // + heading_weight * heading_error * heading_error;
+    derivative[L] = dx * dx + dy * dy + input[dDELTA] * input[dDELTA] * 0.01;
   } );
 }
 
@@ -142,14 +128,13 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s,
                                                       max_lateral_acceleration, desired_time_headway, planning_horizon_s );
 
-  // return generate_trajectory_from_speed_profile( speed_profile, latest_route, options.timeStep );
+  bool generate_without_optinlc = true;
+  if( generate_without_optinlc )
+  {
+    return generate_trajectory_from_speed_profile( speed_profile, latest_route, 0.1 );
+  }
 
-  // // print speed profile for debugging
-  // for( const auto& [s, speed] : speed_profile.s_to_speed )
-  // {
-  //   std::cerr << "s: " << s << ", speed: " << speed << std::endl;
-  // }
-  // Set up initial state
+
   VECTOR<double, input_size> initial_input = { 0.0 };
   VECTOR<double, state_size> initial_state = {
     current_state.x, current_state.y, current_state.yaw_angle, current_state.vx, current_state.steering_angle, initial_s, 0.0
@@ -168,20 +153,6 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   auto   opt_x                   = solver.get_optimal_states();
   auto   time                    = solver.getTime();
   double last_objective_function = solver.get_final_objective_function();
-
-  bool bad_condition = false;
-  if( bad_counter > 4 )
-    bad_counter = 0;
-  for( size_t i = 0; i < control_points; i++ )
-  {
-    if( last_objective_function > threshold_bad_output || opt_x[i * state_size + V] > max_forward_speed
-        || opt_x[i * state_size + V] < max_reverse_speed || std::abs( opt_x[i * state_size + dDELTA] ) > max_steering_velocity )
-    {
-      bad_condition  = true;
-      bad_counter   += 1;
-      break;
-    }
-  }
 
   dynamics::Trajectory planned_trajectory;
   for( size_t i = 0; i < control_points; i++ )
@@ -207,17 +178,6 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     planned_trajectory.states.back().ax       = planned_trajectory.states[planned_trajectory.states.size() - 2].ax;
   }
   return planned_trajectory;
-
-  // if( !bad_condition && bad_counter < 5 )
-  // {
-  //   previous_trajectory = planned_trajectory;
-  //   bad_counter         = 0;
-  //   return planned_trajectory;
-  // }
-  // else
-  // {
-  //   return previous_trajectory;
-  // }
 }
 
 } // namespace planner

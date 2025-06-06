@@ -58,21 +58,17 @@ private:
   OptiNLC_Options options;
 
   // Parameters
-  double lateral_weight            = 0.01;
-  double heading_weight            = 0.06;
   double wheelbase                 = 2.69;
   double max_forward_speed         = 13.6;
   double max_reverse_speed         = -2.0;
   double max_steering_velocity     = 0.5;
   double max_steering_acceleration = 10.5;
-  double threshold_bad_output      = 20.0;
-  double tau                       = 2.5;
 
   // IDM & Planning
   double desired_time_headway     = 1.5;
   double max_acceleration         = 2.0;
   double max_deceleration         = 2.5;
-  double max_lateral_acceleration = 2.0; // m/s^2, lateral acceleration limit
+  double max_lateral_acceleration = 1.0; // m/s^2, lateral acceleration limit
   double planning_horizon_s       = 100.0;
 
   // MPC failure tracking
