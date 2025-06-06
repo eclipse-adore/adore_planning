@@ -59,13 +59,13 @@ OptiNLCTrajectoryPlanner::setup_constraints( OptiNLC_OCP<double, input_size, sta
 
   ocp.setUpdateInputLowerBounds( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, input_size> input_bounds;
-    input_bounds[dDELTA] = -max_steering_acceleration;
+    input_bounds[dDELTA] = -max_steering_velocity;
     return input_bounds;
   } );
 
   ocp.setUpdateInputUpperBounds( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, input_size> input_bounds;
-    input_bounds[dDELTA] = max_steering_acceleration;
+    input_bounds[dDELTA] = max_steering_velocity;
     return input_bounds;
   } );
 
@@ -128,7 +128,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s,
                                                       max_lateral_acceleration, desired_time_headway, planning_horizon_s );
 
-  bool generate_without_optinlc = true;
+  bool generate_without_optinlc = false;
   if( generate_without_optinlc )
   {
     return generate_trajectory_from_speed_profile( speed_profile, latest_route, 0.1 );
@@ -151,6 +151,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   solver.solve( current_state.time, initial_state, initial_input );
 
   auto   opt_x                   = solver.get_optimal_states();
+  auto   opt_u                   = solver.get_optimal_inputs();
   auto   time                    = solver.getTime();
   double last_objective_function = solver.get_final_objective_function();
 
@@ -163,8 +164,8 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     state.yaw_angle      = opt_x[i * state_size + PSI];
     state.vx             = opt_x[i * state_size + V];
     state.steering_angle = opt_x[i * state_size + DELTA];
-    // state.steering_rate  = opt_x[i * state_size + dDELTA];
-    state.time = time[i];
+    state.steering_rate  = opt_u[i * input_size + dDELTA];
+    state.time           = time[i];
     if( i < control_points - 1 )
     {
       state.yaw_rate = ( opt_x[( i + 1 ) * state_size + PSI] - opt_x[i * state_size + PSI] ) / options.timeStep;
