@@ -148,43 +148,6 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   vehicle_command.steering_angle = k_yaw * error_yaw + k_distance * error_lateral;
   vehicle_command.acceleration   = -k_speed * ( current_state.vx - idm_velocity );
 
-  // 6. Fluid-dynamics repulsion from obstacles:
-  //    Sum up repulsive “virtual velocities” for all obstacles, then
-  //    project onto vehicle coords for adjustments in steering & acceleration.
-  //    (compute_obstacle_avoidance_speed_component_errors is your existing method.)
-  // auto speed_component_errors = compute_obstacle_avoidance_speed_component_errors( current_state, traffic_participant_set, id );
-
-  // double avoidance_steering     = 0.0;
-  // double avoidance_acceleration = 0.0;
-
-  // // If offset is within lane bounds, try to avoid obstacles via fluid model
-  // if( std::abs( offset ) < 0.5 * lane_width && closest_obstacle_distance > 2.0 )
-  // {
-  //   // "speed_component_errors" => (longitudinal_speed_error, lateral_speed_error)
-  //   double longitudinal_speed_error = speed_component_errors.first;
-  //   double lateral_speed_error      = speed_component_errors.second;
-
-  //   // Gains for fluid repulsion (example new params: k_repulsion_lat, k_repulsion_long)
-  //   avoidance_acceleration = k_obstacle_avoidance_longitudinal * longitudinal_speed_error;
-  //   avoidance_steering     = k_obstacle_avoidance_lateral * lateral_speed_error;
-  // }
-
-  // // 7. Merge lane-following with obstacle-avoidance
-  // vehicle_command.acceleration   += avoidance_acceleration;
-  // vehicle_command.steering_angle += avoidance_steering;
-
-  // // 8. (Optional) Lane-center “pull” that weakens if obstacles are near
-  // double lane_center_gain = 1.0; // example
-  // double alpha_center     = 1.0;
-  // // for instance, we can fade the lane center pull based on how close the leading obstacle is:
-  // double fade_distance = 5.0; // fade out center pull if obstacle is < 10m
-  // alpha_center         = sigmoid_activation( closest_obstacle_distance,
-  //                                            fade_distance, // threshold
-  //                                            -k_sigmoid );  // negative => flip direction
-  // // alpha_center => near 0 if obstacle is close, near 1 if obstacle is far
-  // // Add a final "pull" to the center line
-  // vehicle_command.steering_angle += lane_center_gain * alpha_center * error_lateral;
-
   // 9. Finally, clamp commands (accelerations, steering, etc.) to your vehicle limits
   limits.max_steering_angle = 0.5;
   vehicle_command.clamp_within_limits( limits );

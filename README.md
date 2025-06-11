@@ -21,11 +21,6 @@ The **Planning Library** provides advanced tools for trajectory planning and opt
 
 ## Included Modules
 
-### Lane Follow Planner
-**File:** `lane_follow_planner.hpp`
-- Implements lane-following behavior by generating trajectories that align with the centerline of a given route.
-- Considers vehicle dynamics, curvature, and control limits.
-
 ### OptiNLC Trajectory Optimizer
 **File:** `optinlc_trajectory_optimizer.hpp`
 - Performs trajectory optimization using Model Predictive Control (MPC).
