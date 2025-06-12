@@ -17,6 +17,10 @@ find_package(adore_math REQUIRED)
 find_package(adore_map REQUIRED)
 find_package(adore_dynamics REQUIRED)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  add_compile_options(-O3)
+endif()
+
 
 # Library sources
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.c")

@@ -84,10 +84,8 @@ SpeedProfile::predict_traffic_participant_trajectories( const dynamics::TrafficP
                                                         const map::Route& route, double prediction_horizon, double time_step )
 {
   std::unordered_map<int, std::map<double, double>> predicted_trajectories;
-  std::cerr << "number of traffic participants: " << traffic_participants.participants.size() << std::endl;
   for( const auto& [id, participant] : traffic_participants.participants )
   {
-    std::cerr << "Predicting trajectory for participant ID: " << id << std::endl;
     double current_s = route.get_s( participant.state );
     double offset    = math::distance_2d( participant.state, route.get_pose_at_s( current_s ) );
     if( offset > 4.0 )
