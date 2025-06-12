@@ -91,13 +91,13 @@ private:
     double time_step = 0.5 );
 };
 
-static adore::dynamics::Trajectory
+inline adore::dynamics::Trajectory
 generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const map::Route& route, double time_step = 0.1 )
 {
   adore::dynamics::Trajectory initial_trajectory;
   double                      accumulated_time = 0.0;
+  double                      wheelbase        = speed_profile.vehicle_params.wheelbase;
 
-  // Generate initial trajectory from the speed profile
   auto it      = speed_profile.s_to_speed.begin();
   auto next_it = std::next( it );
 
@@ -110,29 +110,31 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
     double v2      = next_it->second;
     double delta_s = s2 - s1;
 
-    // Get the pose at s1
-    auto pose = route.get_pose_at_s( s1 );
+    auto   pose      = route.get_pose_at_s( s1 );
+    double curvature = route.get_curvature_at_s( s1 );
 
     // Create a VehicleStateDynamic
     adore::dynamics::VehicleStateDynamic state;
-    state.x         = pose.x;
-    state.y         = pose.y;
-    state.yaw_angle = pose.yaw;
-    state.vx        = v1;
-    state.time      = accumulated_time;
+    state.x              = pose.x;
+    state.y              = pose.y;
+    state.yaw_angle      = pose.yaw;
+    state.vx             = v1;
+    state.steering_angle = std::atan( wheelbase * curvature );
 
-    // Add to the initial trajectory
+    // Compute acceleration from speed difference
+    double avg_speed = ( v1 + v2 ) / 2.0;
+    double delta_t   = ( avg_speed > 1e-3 ) ? delta_s / avg_speed : time_step;
+    state.ax         = ( delta_t > 1e-6 ) ? ( v2 - v1 ) / delta_t : 0.0;
+    state.time       = accumulated_time;
+
     initial_trajectory.states.push_back( state );
-
-    // Integrate time using the segment speed (average of v1 and v2)
-    double avg_speed  = ( v1 + v2 ) / 2.0;
-    accumulated_time += ( avg_speed > 1e-3 ) ? delta_s / avg_speed : time_step;
+    accumulated_time += delta_t;
 
     ++it;
     ++next_it;
   }
 
-  // Re-interpolate to constant time intervals using `get_state_at_time`
+  // Re-interpolate to constant time intervals using get_state_at_time
   adore::dynamics::Trajectory trajectory;
   double                      final_time = accumulated_time;
 
@@ -144,5 +146,6 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
 
   return trajectory;
 }
+
 } // namespace planner
 } // namespace adore

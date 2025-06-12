@@ -24,21 +24,15 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   problem.horizon_steps = 30;
   problem.dt            = 0.1; // 0.1 s per step.
 
-  dynamics::Trajectory initial_guess_trajectory = generate_trajectory_from_speed_profile( speed_profile, latest_route, problem.dt );
-
-  // set best states and controls to the initial guess in opposite of end of function
-  problem.initial_states   = Eigen::MatrixXd::Zero( problem.state_dim, problem.horizon_steps + 1 );
-  problem.initial_controls = Eigen::MatrixXd::Zero( problem.control_dim, problem.horizon_steps );
-
-  for( int i = 0; i < problem.horizon_steps - 1; ++i )
-  {
-    const auto& state = initial_guess_trajectory.states.at( i );
-    problem.initial_states.col( i ) << state.x, state.y, state.yaw_angle, state.vx;
-    problem.initial_controls.col( i ) << state.steering_angle, state.ax;
-  }
   // Initial state: for example, X=1, Y=1, psi=1, vx=1
   problem.initial_state = Eigen::VectorXd::Zero( problem.state_dim );
   problem.initial_state << current_state.x, current_state.y, current_state.yaw_angle, current_state.vx;
+
+  // warm start
+  if( last_problem )
+  {
+    problem.initial_controls = last_problem->best_controls;
+  }
 
   // Dynamics: use the dynamic_bicycle_model defined in your code.
   problem.dynamics = single_track_model;
@@ -67,19 +61,21 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
     double heading_error = math::normalize_angle( state( 2 ) - ref_pose.yaw );
 
     // Rotate the position error into the reference frame.
-    double lateral_error = dx * dx + dy * dy;
+    double lateral_error = -std::sin( ref_pose.yaw ) * dx + std::cos( ref_pose.yaw ) * dy;
     // Speed error.
     double speed_error = vx - ref_speed;
 
     // Total cost.
     double cost  = 0.0;
-    cost        += w_lane * lateral_error;
+    cost        += w_lane * lateral_error * lateral_error; // Penalize lateral deviation.
     cost        += w_speed * speed_error * speed_error;
     cost        += w_delta * delta * delta;
     cost        += w_acc * a_cmd * a_cmd;
     cost        += heading_error * heading_error; // Penalize heading error.
     return cost;
   };
+
+  //
 
   // Terminal cost (set to zero here, can be modified if needed).
   problem.terminal_cost = [=]( const State& state ) -> double { return 0.0; };
@@ -104,12 +100,12 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
 
 
   SolverParams params;
-  params["max_iterations"] = 50;
+  params["max_iterations"] = 10;
   params["tolerance"]      = 1e-4;
 
   auto solver_start = std::chrono::steady_clock::now();
 
-  ilqr_solver( problem, params );
+  osqp_solver( problem, params );
 
   auto solver_end  = std::chrono::steady_clock::now();
   auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>( solver_end - solver_start ).count();
@@ -133,6 +129,7 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
     trajectory.states.push_back( state );
   }
   std::cerr << "best cost : " << problem.best_cost << std::endl;
+  // last_problem = problem;
 
   return trajectory;
 }
