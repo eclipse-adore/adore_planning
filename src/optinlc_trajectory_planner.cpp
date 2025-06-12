@@ -226,7 +226,7 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
     }
     else
     {
-      tau = 1.25; // Lower value for quick braking
+      tau = 1.0; // Lower value for quick braking
     }
 
     // Dynamic model equations
@@ -436,7 +436,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
       bool   within_lane         = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
       distance_to_object        -= state_s;
 
-      if( within_lane && distance_to_object < distance_to_object_min )
+      if( within_lane && distance_to_object < distance_to_object_min && distance_to_object > 0 )
       {
         front_vehicle_velocity = participant.state.vx;
         distance_to_object_min = distance_to_object;
@@ -444,6 +444,7 @@ OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route
     }
   }
 
+  std::cerr << "Distance to nearest object: " << distance_to_object_min << std::endl;
   distance_to_goal = latest_route.get_length() - state_s;
 
   double distance_for_idm = std::min( distance_to_object_min, distance_to_goal );

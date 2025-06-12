@@ -121,7 +121,7 @@ private:
   double desired_time_headway          = 1.5;  // 1.5 seconds time headway
   double front_vehicle_velocity        = 0.0;  // temporary, TODO -> Get from traffic participants list
   double max_acceleration              = 2.0;  // Maximum acceleration 2.0 m/s²
-  double max_deceleration              = 2.5;  // Maximum deceleration 2.5 m/s²
+  double max_deceleration              = 3.5;  // Maximum deceleration 2.5 m/s²
   double velocity_error_gain           = 1.25; // gain for adjusting reference velocity
   double tau                           = 2.5;  // first order velocity profile
   double distance_to_goal              = 100.0;
