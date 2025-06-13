@@ -44,15 +44,14 @@ struct SpeedProfile
   double get_acc_at_s( double s ) const;
 
   void generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                             double initial_speed, double initial_s, double max_lateral_acceleration,
+                                             double initial_speed, double initial_s, double initial_time, double max_lateral_acceleration,
                                              double desired_time_headway, double length );
 
   void backward_pass( MapPointIter& previous_it, const adore::map::Route& route, double initial_s, MapPointIter& current_it,
                       double length );
 
-  void forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it,
-                     std::unordered_map<int, std::map<double, double>>& predicted_trajectories, std::map<double, double>& s_to_curvature,
-                     const adore::map::Route& route );
+  void forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it, std::map<double, double>& s_to_curvature,
+                     const adore::map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants, double initial_time );
 
 
   SpeedProfile() {};
@@ -81,14 +80,8 @@ private:
   double max_acceleration;
   double safety_distance;
 
-  std::map<double, double>  calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
-                                                        double length, double max_curvature = 0.5 );
-  std::pair<double, double> get_nearest_object_info(
-    double s_curr, const std::unordered_map<int, std::map<double, double>>& predicted_trajectories ) const;
-
-  std::unordered_map<int, std::map<double, double>> predict_traffic_participant_trajectories(
-    const dynamics::TrafficParticipantSet& traffic_participants, const map::Route& route, double prediction_horizon = 10.0,
-    double time_step = 0.5 );
+  std::map<double, double> calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
+                                                       double length, double max_curvature = 0.5 );
 };
 
 static adore::dynamics::Trajectory

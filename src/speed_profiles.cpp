@@ -79,50 +79,16 @@ SpeedProfile::get_acc_at_s( double s ) const
   return ( ds != 0.0 ) ? ( dv / ds ) : 0.0;
 }
 
-std::unordered_map<int, std::map<double, double>>
-SpeedProfile::predict_traffic_participant_trajectories( const dynamics::TrafficParticipantSet& traffic_participants,
-                                                        const map::Route& route, double prediction_horizon, double time_step )
-{
-  std::unordered_map<int, std::map<double, double>> predicted_trajectories;
-  std::cerr << "number of traffic participants: " << traffic_participants.participants.size() << std::endl;
-  for( const auto& [id, participant] : traffic_participants.participants )
-  {
-    std::cerr << "Predicting trajectory for participant ID: " << id << std::endl;
-    double current_s = route.get_s( participant.state );
-    double offset    = math::distance_2d( participant.state, route.get_pose_at_s( current_s ) );
-    if( offset > 4.0 )
-      continue;
-
-    double                   current_velocity = participant.state.vx;
-    std::map<double, double> trajectory;
-
-    double accumulated_time = 0.0;
-    while( accumulated_time <= prediction_horizon )
-    {
-      double predicted_s       = current_s + current_velocity * accumulated_time;
-      trajectory[predicted_s]  = current_velocity;
-      accumulated_time        += time_step;
-    }
-
-    predicted_trajectories[id] = std::move( trajectory );
-  }
-
-  return predicted_trajectories;
-}
-
 void
 SpeedProfile::generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                                    double initial_speed, double initial_s, double max_lateral_acceleration,
-                                                    double desired_time_headway, double length )
+                                                    double initial_speed, double initial_s, double initial_time,
+                                                    double max_lateral_acceleration, double desired_time_headway, double length )
 {
   // Clear previous speed profile
   s_to_speed.clear();
 
   // Compute curvature-based speed limits
   std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, initial_s, length );
-
-  // Precompute Traffic Participant Trajectories
-  auto predicted_trajectories = predict_traffic_participant_trajectories( traffic_participants, route );
 
   // Initialize starting conditions
   s_to_speed[initial_s] = initial_speed;
@@ -142,7 +108,7 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
   safety_distance  = distance_headway + vehicle_params.wheelbase + vehicle_params.front_axle_to_front_border;
   max_acceleration = vehicle_params.acceleration_max;
   max_deceleration = -vehicle_params.acceleration_min;
-  forward_pass( it, end_it, prev_it, predicted_trajectories, s_to_curvature, route );
+  forward_pass( it, end_it, prev_it, s_to_curvature, route, traffic_participants, initial_time );
 
   // Backward Pass (Smoothing and Enforcing Deceleration Limits)
   auto current_it  = std::prev( end_it );
@@ -183,18 +149,52 @@ SpeedProfile::backward_pass( MapPointIter& previous_it, const adore::map::Route&
 }
 
 void
-SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it,
-                            std::unordered_map<int, std::map<double, double>>& predicted_trajectories,
-                            std::map<double, double>& s_to_curvature, const adore::map::Route& route )
+SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it, std::map<double, double>& s_to_curvature,
+                            const adore::map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
+                            double initial_time )
 {
   bool stop = false;
+
+  auto get_nearest_object_info_at_time = [&]( double s_curr, double time ) {
+    double object_distance = std::numeric_limits<double>::max();
+    double object_speed    = 0.0;
+
+    for( const auto& [id, participant] : traffic_participants.participants )
+    {
+      const auto& traj = participant.trajectory.value();
+
+      auto state = participant.state;
+      if( participant.trajectory.has_value() )
+        state = traj.get_state_at_time( time );
+
+      double obj_s  = route.get_s( state );
+      double offset = adore::math::distance_2d( state, route.get_pose_at_s( obj_s ) );
+
+      if( offset > 4.0 )
+        continue;
+
+      if( obj_s > s_curr )
+      {
+        double distance = obj_s - s_curr;
+        if( distance < object_distance )
+        {
+          object_distance = distance;
+          object_speed    = state.vx;
+        }
+      }
+    }
+
+    return std::make_pair( object_distance, object_speed );
+  };
+
+  double time = initial_time;
 
   for( ; it != end_it; ++it, ++prev_it )
   {
     double s_prev                        = prev_it->first;
     double s_curr                        = it->first;
     double delta_s                       = s_curr - s_prev;
-    auto [object_distance, object_speed] = get_nearest_object_info( s_curr, predicted_trajectories );
+    auto [object_distance, object_speed] = get_nearest_object_info_at_time( s_curr, time );
     if( object_distance < safety_distance )
       stop = true;
     if( stop )
@@ -226,7 +226,8 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
       idm_speed = 0.0;
     }
 
-    s_to_speed[s_curr] = idm_speed;
+    s_to_speed[s_curr]  = idm_speed;
+    time               += delta_s / idm_speed;
     if( idm_speed == 0.0 )
       stop = true;
   }
@@ -247,6 +248,7 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
   // Get the boundaries for the route segment
   auto begin_it = std::next( route.center_lane.lower_bound( initial_s ) );
   auto end_it   = route.center_lane.upper_bound( initial_s + length );
+
 
   // Iterate over the route with a sliding window of 3 points
   for( auto it = begin_it; std::next( it ) != end_it; ++it )
@@ -273,33 +275,6 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
   return s_to_curvature;
 }
 
-std::pair<double, double>
-SpeedProfile::get_nearest_object_info( double                                                   s_curr,
-                                       const std::unordered_map<int, std::map<double, double>>& predicted_trajectories ) const
-{
-  double object_distance = std::numeric_limits<double>::max();
-  double object_speed    = 0.0; // Will only be set if we find an object
-
-  for( const auto& [id, trajectory] : predicted_trajectories )
-  {
-    auto it = trajectory.lower_bound( s_curr );
-    if( it == trajectory.end() )
-      continue;
-
-    double predicted_s = it->first;
-    if( predicted_s > s_curr )
-    {
-      double distance = predicted_s - s_curr;
-      if( distance < object_distance )
-      {
-        object_distance = distance;
-        object_speed    = it->second;
-      }
-    }
-  }
-
-  return { object_distance, object_speed };
-}
 
 } // namespace planner
 } // namespace adore

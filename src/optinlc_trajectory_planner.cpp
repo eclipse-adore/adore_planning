@@ -125,7 +125,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   double               initial_s = latest_route.get_s( current_state );
 
   // Generate speed profile
-  speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s,
+  speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, current_state.time,
                                                       max_lateral_acceleration, desired_time_headway, planning_horizon_s );
 
   bool generate_without_optinlc = false;
