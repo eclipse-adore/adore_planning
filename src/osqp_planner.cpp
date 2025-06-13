@@ -13,7 +13,8 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   double initial_s = latest_route.get_s( current_state );
 
   // Generate speed profile
-  speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, 1.0, 5.0, 100 );
+  speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, current_state.time,
+                                                      1.0, 5.0, 100 );
 
 
   OCP problem;

@@ -44,15 +44,14 @@ struct SpeedProfile
   double get_acc_at_s( double s ) const;
 
   void generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                             double initial_speed, double initial_s, double max_lateral_acceleration,
+                                             double initial_speed, double initial_s, double initial_time, double max_lateral_acceleration,
                                              double desired_time_headway, double length );
 
   void backward_pass( MapPointIter& previous_it, const adore::map::Route& route, double initial_s, MapPointIter& current_it,
                       double length );
 
-  void forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it,
-                     std::unordered_map<int, std::map<double, double>>& predicted_trajectories, std::map<double, double>& s_to_curvature,
-                     const adore::map::Route& route );
+  void forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter& prev_it, std::map<double, double>& s_to_curvature,
+                     const adore::map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants, double initial_time );
 
 
   SpeedProfile() {};
@@ -81,23 +80,17 @@ private:
   double max_acceleration;
   double safety_distance;
 
-  std::map<double, double>  calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
-                                                        double length, double max_curvature = 0.5 );
-  std::pair<double, double> get_nearest_object_info(
-    double s_curr, const std::unordered_map<int, std::map<double, double>>& predicted_trajectories ) const;
-
-  std::unordered_map<int, std::map<double, double>> predict_traffic_participant_trajectories(
-    const dynamics::TrafficParticipantSet& traffic_participants, const map::Route& route, double prediction_horizon = 10.0,
-    double time_step = 0.5 );
+  std::map<double, double> calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
+                                                       double length, double max_curvature = 0.5 );
 };
 
-inline adore::dynamics::Trajectory
+static adore::dynamics::Trajectory
 generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const map::Route& route, double time_step = 0.1 )
 {
   adore::dynamics::Trajectory initial_trajectory;
   double                      accumulated_time = 0.0;
-  double                      wheelbase        = speed_profile.vehicle_params.wheelbase;
 
+  // Generate initial trajectory from the speed profile
   auto it      = speed_profile.s_to_speed.begin();
   auto next_it = std::next( it );
 
@@ -110,31 +103,29 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
     double v2      = next_it->second;
     double delta_s = s2 - s1;
 
-    auto   pose      = route.get_pose_at_s( s1 );
-    double curvature = route.get_curvature_at_s( s1 );
+    // Get the pose at s1
+    auto pose = route.get_pose_at_s( s1 );
 
     // Create a VehicleStateDynamic
     adore::dynamics::VehicleStateDynamic state;
-    state.x              = pose.x;
-    state.y              = pose.y;
-    state.yaw_angle      = pose.yaw;
-    state.vx             = v1;
-    state.steering_angle = std::atan( wheelbase * curvature );
+    state.x         = pose.x;
+    state.y         = pose.y;
+    state.yaw_angle = pose.yaw;
+    state.vx        = v1;
+    state.time      = accumulated_time;
 
-    // Compute acceleration from speed difference
-    double avg_speed = ( v1 + v2 ) / 2.0;
-    double delta_t   = ( avg_speed > 1e-3 ) ? delta_s / avg_speed : time_step;
-    state.ax         = ( delta_t > 1e-6 ) ? ( v2 - v1 ) / delta_t : 0.0;
-    state.time       = accumulated_time;
-
+    // Add to the initial trajectory
     initial_trajectory.states.push_back( state );
-    accumulated_time += delta_t;
+
+    // Integrate time using the segment speed (average of v1 and v2)
+    double avg_speed  = ( v1 + v2 ) / 2.0;
+    accumulated_time += ( avg_speed > 1e-3 ) ? delta_s / avg_speed : time_step;
 
     ++it;
     ++next_it;
   }
 
-  // Re-interpolate to constant time intervals using get_state_at_time
+  // Re-interpolate to constant time intervals using `get_state_at_time`
   adore::dynamics::Trajectory trajectory;
   double                      final_time = accumulated_time;
 
@@ -146,6 +137,5 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
 
   return trajectory;
 }
-
 } // namespace planner
 } // namespace adore
