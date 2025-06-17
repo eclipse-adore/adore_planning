@@ -22,99 +22,6 @@ struct PlannerCostWeights
   double terminal_lateral_error = 100.0;
 };
 
-// inline Eigen::VectorXd
-// analytic_cost_state_gradient( const State& x, const Control& u, size_t time_idx, const dynamics::Trajectory& ref_traj, double dt,
-//                               const PlannerCostWeights& weights )
-// {
-//   Eigen::VectorXd grad = Eigen::VectorXd::Zero( 4 );
-
-// double t   = time_idx * dt;
-// auto   ref = ref_traj.get_state_at_time( t );
-
-// double dx = x( 0 ) - ref.x;
-// double dy = x( 1 ) - ref.y;
-
-// double cos_yaw = std::cos( ref.yaw_angle );
-// double sin_yaw = std::sin( ref.yaw_angle );
-
-// double lateral_error      = -dx * sin_yaw + dy * cos_yaw;
-// double longitudinal_error = dx * cos_yaw + dy * sin_yaw;
-// double heading_error      = math::normalize_angle( x( 2 ) - ref.yaw_angle );
-// double speed_error        = x( 3 ) - ref.vx;
-
-// // d(cost)/d(x, y)
-// grad( 0 ) += 2.0 * weights.lane_error * lateral_error * ( -sin_yaw );
-// grad( 1 ) += 2.0 * weights.lane_error * lateral_error * cos_yaw;
-
-// grad( 0 ) += weights.long_error * cos_yaw;
-// grad( 1 ) += weights.long_error * sin_yaw;
-
-// // d(cost)/d(psi)
-// grad( 2 ) += 2.0 * weights.heading_error * heading_error;
-
-// // d(cost)/d(vx)
-// grad( 3 ) += 2.0 * weights.speed_error * speed_error;
-
-// return grad;
-// }
-
-// inline Eigen::VectorXd
-// analytic_cost_control_gradient( const State& x, const Control& u, const PlannerCostWeights& weights )
-// {
-//   Eigen::VectorXd grad = Eigen::VectorXd::Zero( 2 );
-
-// grad( 0 ) = 2.0 * weights.steering_angle * u( 0 );
-// grad( 1 ) = 2.0 * weights.acceleration * u( 1 );
-
-// return grad;
-// }
-
-// inline Eigen::MatrixXd
-// analytic_cost_state_hessian( const State& x, const Control& u, size_t time_idx, const dynamics::Trajectory& ref_traj, double dt,
-//                              const PlannerCostWeights& weights )
-// {
-//   Eigen::MatrixXd H = Eigen::MatrixXd::Zero( 4, 4 );
-
-// double t   = time_idx * dt;
-// auto   ref = ref_traj.get_state_at_time( t );
-
-// double dx = x( 0 ) - ref.x;
-// double dy = x( 1 ) - ref.y;
-
-// double cos_yaw = std::cos( ref.yaw_angle );
-// double sin_yaw = std::sin( ref.yaw_angle );
-
-// // Second derivatives of lateral error terms wrt x/y
-// double d_lat_dx = -sin_yaw;
-// double d_lat_dy = cos_yaw;
-
-// H( 0, 0 ) += 2.0 * weights.lane_error * d_lat_dx * d_lat_dx;
-// H( 1, 1 ) += 2.0 * weights.lane_error * d_lat_dy * d_lat_dy;
-// H( 0, 1 ) += 2.0 * weights.lane_error * d_lat_dx * d_lat_dy;
-// H( 1, 0 )  = H( 0, 1 ); // symmetric
-
-// // Add heading and speed error curvature
-// H( 2, 2 ) += 2.0 * weights.heading_error;
-// H( 3, 3 ) += 2.0 * weights.speed_error;
-
-// return H;
-// }
-
-// inline Eigen::MatrixXd
-// analytic_cost_control_hessian( const State& x, const Control& u, const PlannerCostWeights& weights )
-// {
-//   Eigen::MatrixXd H = Eigen::MatrixXd::Zero( 2, 2 );
-//   H( 0, 0 )         = 2.0 * weights.steering_angle;
-//   H( 1, 1 )         = 2.0 * weights.acceleration;
-//   return H;
-// }
-
-// inline Eigen::MatrixXd
-// analytic_cost_cross_term( const State& x, const Control& u )
-// {
-//   return Eigen::MatrixXd::Zero( 2, 4 ); // Assuming decoupled state/control cost
-// }
-
 inline MotionModel
 get_planning_model( const dynamics::PhysicalVehicleParameters& params )
 {
@@ -178,22 +85,6 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
     return cost;
   };
   problem.terminal_cost = []( const State& x ) -> double { return 0.0; };
-
-  // problem.cost_state_gradient = [=]( const StageCostFunction&, const State& x, const Control& u, size_t t ) {
-  //   return analytic_cost_state_gradient( x, u, t, ref_traj, dt, weights );
-  // };
-  // problem.cost_control_gradient = [=]( const StageCostFunction&, const State& x, const Control& u, size_t t ) {
-  //   return analytic_cost_control_gradient( x, u, weights );
-  // };
-  // problem.cost_state_hessian = [=]( const StageCostFunction&, const State& x, const Control& u, size_t t ) {
-  //   return analytic_cost_state_hessian( x, u, t, ref_traj, dt, weights );
-  // };
-  // problem.cost_control_hessian = [=]( const StageCostFunction&, const State& x, const Control& u, size_t t ) {
-  //   return analytic_cost_control_hessian( x, u, weights );
-  // };
-  // problem.cost_cross_term = [=]( const StageCostFunction&, const State& x, const Control& u, size_t t ) {
-  //   return analytic_cost_cross_term( x, u );
-  // };
 
 
   Eigen::VectorXd lower_bounds( problem.control_dim ), upper_bounds( problem.control_dim );
