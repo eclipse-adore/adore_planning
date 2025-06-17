@@ -37,6 +37,7 @@ namespace planner
 struct SpeedProfile
 {
   std::map<double, double> s_to_speed;
+  std::map<double, double> s_to_acc;
 
   using MapPointIter = std::map<double, adore::map::MapPoint>::const_iterator;
 
@@ -113,6 +114,7 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
     state.yaw_angle = pose.yaw;
     state.vx        = v1;
     state.time      = accumulated_time;
+    state.ax        = ( v2 - v1 ) / time_step;
 
     // Add to the initial trajectory
     initial_trajectory.states.push_back( state );

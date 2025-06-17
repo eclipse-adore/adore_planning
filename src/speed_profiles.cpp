@@ -42,41 +42,21 @@ SpeedProfile::get_speed_at_s( double s ) const
 double
 SpeedProfile::get_acc_at_s( double s ) const
 {
-  if( s_to_speed.size() < 2 )
+  auto it = s_to_acc.lower_bound( s );
+  if( it == s_to_acc.end() )
   {
-    std::cerr << "[WARNING] Cannot compute acceleration: speed profile too small.\n";
-    return 0.0;
+    return s_to_acc.rbegin()->second;
   }
-
-  auto it = s_to_speed.lower_bound( s );
-
-  // Handle edge cases
-  if( it == s_to_speed.begin() )
+  else if( it == s_to_acc.begin() )
   {
-    auto it_next = std::next( it );
-    if( it_next == s_to_speed.end() )
-      return 0.0;
-
-    double ds = it_next->first - it->first;
-    double dv = it_next->second - it->second;
-    return ( ds != 0.0 ) ? ( dv / ds ) : 0.0;
+    return it->second;
   }
-
-  if( it == s_to_speed.end() )
+  else
   {
-    auto it_prev  = std::prev( it );
-    auto it_prev2 = ( it_prev == s_to_speed.begin() ) ? it_prev : std::prev( it_prev );
-
-    double ds = it_prev->first - it_prev2->first;
-    double dv = it_prev->second - it_prev2->second;
-    return ( ds != 0.0 ) ? ( dv / ds ) : 0.0;
+    auto   it_prev = std::prev( it );
+    double ratio   = ( s - it_prev->first ) / ( it->first - it_prev->first );
+    return it_prev->second + ratio * ( it->second - it_prev->second );
   }
-
-  // Use central difference
-  auto   it_prev = std::prev( it );
-  double ds      = it->first - it_prev->first;
-  double dv      = it->second - it_prev->second;
-  return ( ds != 0.0 ) ? ( dv / ds ) : 0.0;
 }
 
 void
@@ -136,6 +116,7 @@ SpeedProfile::backward_pass( MapPointIter& previous_it, const adore::map::Route&
     if( s_to_speed[s_prev] > idm_speed )
     {
       s_to_speed[s_prev] = idm_speed;
+      s_to_acc[s_prev]   = idm_acc;
     }
 
     if( previous_it == route.center_lane.begin() )
@@ -227,6 +208,7 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
     }
 
     s_to_speed[s_curr]  = idm_speed;
+    s_to_acc[s_curr]    = idm_acc;
     time               += delta_s / idm_speed;
     if( idm_speed == 0.0 )
       stop = true;
