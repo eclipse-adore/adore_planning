@@ -33,6 +33,7 @@
 #include "OptiNLC_Solver.h"
 #include "dynamics/traffic_participant.hpp"
 #include "dynamics/trajectory.hpp"
+#include "planning/speed_profiles.hpp"
 
 namespace adore
 {
@@ -42,6 +43,13 @@ struct route_to_piecewise_polynomial
 {
   adore::math::PiecewisePolynomial::PiecewiseStruct x;
   adore::math::PiecewisePolynomial::PiecewiseStruct y;
+  adore::math::PiecewisePolynomial::PiecewiseStruct heading;
+};
+struct prediction_to_piecewise_polynomial
+{
+  adore::math::PiecewisePolynomial::PiecewiseStruct x;
+  adore::math::PiecewisePolynomial::PiecewiseStruct y;
+  adore::math::PiecewisePolynomial::PiecewiseStruct ax;
   adore::math::PiecewisePolynomial::PiecewiseStruct heading;
 };
 
@@ -81,13 +89,15 @@ private:
     std::vector<double> s; // progress
     std::vector<double> x;
     std::vector<double> y;
-    std::vector<double> v;
+    std::vector<double> ax;
     std::vector<double> psi; // heading
     std::vector<double> width;
-  } route_to_follow;
+  } route_to_follow, trajectory_to_follow;
 
   route_to_piecewise_polynomial setup_optimizer_parameters_using_route( const adore::map::Route&             latest_route,
                                                                         const dynamics::VehicleStateDynamic& current_state );
+  prediction_to_piecewise_polynomial setup_optimizer_parameters_using_prediction( const dynamics::TrafficParticipantSet& traffic_participants,
+                                                                      const dynamics::VehicleStateDynamic& current_state );
 
   double lateral_weight            = 0.01;
   double heading_weight            = 0.06;
@@ -107,14 +117,16 @@ private:
   // Curvature based velocity calculation members
   double              maximum_velocity   = 5.0; // Maximum set velocity
   double              reference_velocity = 5.0; // Reference velocity for planner
-  double              lookahead_time     = 6.0; // 3 seconds lookahead for curvature
+  double              lookahead_time     = 6.0; // 6 seconds lookahead for curvature
   double              distance_moved     = 0.0;
   std::vector<double> curvature_behind;
-  double              look_behind_for_curvature = 3.0; // 3 meters look behind for curvature based speed reduction
+  double              look_behind_for_curvature = 3.0;  // 3 meters look behind for curvature based speed reduction
   int                 distance_to_add_behind    = 1;
-  int                 safe_index                = 10;  // safe index for curvature
-  double              lateral_acceleration      = 0.75; // max lateral acceleration 1.0 m/s²
-  double              minimum_velocity_in_curve = 1.0; // min velocity in a curve 2 m/s²
+  int                 safe_index                = 10;   // safe index for curvature
+  double              lateral_acceleration      = 1.0; // max lateral acceleration 0.75 m/s²
+  double              minimum_velocity_in_curve = 1.0;  // min velocity in a curve 1 m/s²
+  double initial_s = 0.0;
+  double curvature_acc = 0.0;
 
   // IDM related members
   double min_distance_to_vehicle_ahead = 10.0; // 10 meters minimum gap to vehicle in front
@@ -135,10 +147,15 @@ private:
   dynamics::Trajectory previous_trajectory;
 
   // Variables to convert route to piecewise polynomial function
-  adore::math::PiecewisePolynomial                  pp;
+  adore::math::PiecewisePolynomial                  pp_route;
   adore::math::PiecewisePolynomial::PiecewiseStruct route_x;
   adore::math::PiecewisePolynomial::PiecewiseStruct route_y;
   adore::math::PiecewisePolynomial::PiecewiseStruct route_heading;
+  adore::math::PiecewisePolynomial                  pp_prediction;
+  adore::math::PiecewisePolynomial::PiecewiseStruct ego_prediction_x;
+  adore::math::PiecewisePolynomial::PiecewiseStruct ego_prediction_y;
+  adore::math::PiecewisePolynomial::PiecewiseStruct ego_prediction_ax;
+  adore::math::PiecewisePolynomial::PiecewiseStruct ego_prediction_heading;
 
   // Variables for MPC solver configuration
   OptiNLC_Options options;
@@ -154,6 +171,7 @@ private:
 
   // Helper function to set up route to follow to piecewise polynomial
   void setup_reference_route( route_to_piecewise_polynomial& reference_route );
+  void setup_reference_trajectory( prediction_to_piecewise_polynomial& ego_prediction );
 
   // Helper function to get reference velocity
   std::vector<double> compute_curvatures( const dynamics::VehicleStateDynamic& current_state );
@@ -170,6 +188,7 @@ private:
 public:
 
   OptiNLCTrajectoryPlanner();
+  SpeedProfile speed_profile;
   dynamics::VehicleCommandLimits limits;
 
   // Public method to get the next vehicle command based on OptiNLCTrajectoryPlanner

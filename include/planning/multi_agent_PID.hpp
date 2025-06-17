@@ -44,13 +44,13 @@ public:
   void plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set );
 
 
-  double       desired_acceleration        = 1.0;
-  double       desired_deceleration        = 1.0;
+  double       desired_acceleration        = 3.0;
+  double       desired_deceleration        = 3.0;
   double       max_lateral_acceleration    = 0.5;
-  int          number_of_integration_steps = 200;
-  double       dt                          = 0.05;
+  int          number_of_integration_steps = 40;
+  double       dt                          = 0.1;
   const double min_point_distance          = 0.05;
-  double       max_speed                   = 5.0;
+  double       max_speed                   = 10.0;
 
   double obstacle_avoidance_offset_threshold = 1.0;
   double k_yaw                               = 8.0;
@@ -62,7 +62,7 @@ public:
   double k_sigmoid                           = 5.0;
 
   double lane_width   = 4.0;
-  double min_distance = 3.0;
+  double min_distance = 8.0;
   double time_headway = 3.0;
 
   dynamics::VehicleCommandLimits limits;
