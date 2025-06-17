@@ -16,6 +16,8 @@ find_package(MultiAgentSolver REQUIRED)
 find_package(adore_math REQUIRED)
 find_package(adore_map REQUIRED)
 find_package(adore_dynamics REQUIRED)
+find_package(adore_controllers REQUIRED)
+
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   add_compile_options(-O3)
@@ -45,6 +47,8 @@ target_link_libraries(${PROJECT_NAME}
     adore_map::adore_map
     adore_math::adore_math
     adore_dynamics::adore_dynamics
+    adore_controllers::adore_controllers
+
 
 )
 

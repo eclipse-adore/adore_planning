@@ -9,7 +9,7 @@
   <depend>adore_math</depend>
   <depend>adore_map</depend>
   <depend>adore_dynamics</depend>
-
+  <depend>adore_controllers</depend>
 
   <depend>osqp</depend>
   <depend>Eigen3</depend>
