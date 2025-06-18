@@ -22,15 +22,16 @@ struct PlannerCostWeights
   double terminal_lateral_error = 100.0;
 };
 
-inline MotionModel
+inline mas::MotionModel
 get_planning_model( const dynamics::PhysicalVehicleParameters& params )
 {
-  return [params]( const State& x, const Control& u ) -> StateDerivative {
-    StateDerivative dxdt( 4 );
-    dxdt( 0 ) = x( 3 ) * std::cos( x( 2 ) );
-    dxdt( 1 ) = x( 3 ) * std::sin( x( 2 ) );
-    dxdt( 2 ) = x( 3 ) * std::tan( u( 0 ) ) / params.wheelbase;
-    dxdt( 3 ) = u( 1 );
+  return [params]( const mas::State& x, const mas::Control& u ) -> mas::StateDerivative {
+    mas::StateDerivative dxdt( 4 );
+    dxdt( 0 ) = x( 3 ) * std::cos( x( 2 ) );                    // x
+    dxdt( 1 ) = x( 3 ) * std::sin( x( 2 ) );                    // y
+    dxdt( 2 ) = x( 3 ) * std::tan( u( 0 ) ) / params.wheelbase; // yaw_angle
+    dxdt( 3 ) = u( 1 );                                         // v
+
     return dxdt;
   };
 }
@@ -51,7 +52,7 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   // ref_traj.adjust_start_time( current_state.time );
 
   PlannerCostWeights weights;
-  OCP                problem;
+  mas::OCP           problem;
   problem.state_dim     = 4;
   problem.control_dim   = 2;
   problem.horizon_steps = horizon_steps;
@@ -60,7 +61,7 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   problem.initial_state << current_state.x, current_state.y, current_state.yaw_angle, current_state.vx;
   problem.dynamics = get_planning_model( speed_profile.vehicle_params );
 
-  problem.stage_cost = [=]( const State& x, const Control& u, size_t time_idx ) -> double {
+  problem.stage_cost = [=]( const mas::State& x, const mas::Control& u, size_t time_idx ) -> double {
     double t         = time_idx * dt;
     auto   ref_state = ref_traj.get_state_at_time( t );
 
@@ -74,6 +75,10 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
     double heading_error      = math::normalize_angle( x( 2 ) - ref_state.yaw_angle );
     double speed_error        = x( 3 ) - ref_state.vx;
 
+    double jerk          = 0.0;
+    double steering_rate = 0.0;
+
+
     double cost  = 0.0;
     cost        += weights.lane_error * lateral_error * lateral_error;
     cost        += weights.speed_error * speed_error * speed_error;
@@ -81,10 +86,11 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
     cost        += weights.steering_angle * u( 0 ) * u( 0 );
     cost        += weights.acceleration * u( 1 ) * u( 1 );
     cost        += weights.long_error * longitudinal_error * longitudinal_error;
-
+    cost        += weights.steering_rate * steering_rate * steering_rate;
+    cost        += weights.jerk * jerk * jerk;
     return cost;
   };
-  problem.terminal_cost = []( const State& x ) -> double { return 0.0; };
+  problem.terminal_cost = []( const mas::State& x ) -> double { return 0.0; };
 
 
   Eigen::VectorXd lower_bounds( problem.control_dim ), upper_bounds( problem.control_dim );
@@ -106,7 +112,7 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   problem.initialize_problem();
   problem.verify_problem();
 
-  SolverParams params;
+  mas::SolverParams params;
   params["max_iterations"] = 1000;
   params["tolerance"]      = 1e-8;
   params["max_ms"]         = 30;
@@ -114,9 +120,19 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
 
 
   // You can switch to ilqr_solver here if needed
-  // osqp_solver( problem, params );
-  ilqr_solver( problem, params );
-  cgd_solver( problem, params );
+  // mas::osqp_solver( problem, params );
+
+  mas::iLQR ilqr_solver;
+  ilqr_solver.set_params( params );
+
+  mas::CGD cgd_solver;
+  cgd_solver.set_params( params );
+
+  // mas::OSQP osqp_solver;
+  // osqp_solver.set_params( params );
+
+  cgd_solver.solve( problem );
+  ilqr_solver.solve( problem );
 
 
   dynamics::Trajectory trajectory;

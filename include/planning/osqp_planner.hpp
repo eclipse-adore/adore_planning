@@ -30,8 +30,8 @@ class OSQPPlanner
 
 public:
 
-  SpeedProfile       speed_profile;
-  std::optional<OCP> last_problem = std::nullopt;
+  SpeedProfile            speed_profile;
+  std::optional<mas::OCP> last_problem = std::nullopt;
 
 
   dynamics::Trajectory plan_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
