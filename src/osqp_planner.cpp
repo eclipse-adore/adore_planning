@@ -131,8 +131,8 @@ OSQPPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::Ve
   // mas::OSQP osqp_solver;
   // osqp_solver.set_params( params );
 
-  cgd_solver.solve( problem );
   ilqr_solver.solve( problem );
+  cgd_solver.solve( problem );
 
 
   dynamics::Trajectory trajectory;
