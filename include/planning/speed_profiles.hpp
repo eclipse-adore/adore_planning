@@ -114,14 +114,16 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
     state.yaw_angle = pose.yaw;
     state.vx        = v1;
     state.time      = accumulated_time;
-    state.ax        = ( v2 - v1 ) / time_step;
+
 
     // Add to the initial trajectory
-    initial_trajectory.states.push_back( state );
 
     // Integrate time using the segment speed (average of v1 and v2)
     double avg_speed  = ( v1 + v2 ) / 2.0;
-    accumulated_time += ( avg_speed > 1e-3 ) ? delta_s / avg_speed : time_step;
+    accumulated_time += ( avg_speed > 1e-3 ) ? delta_s / avg_speed : 0.0;
+    state.ax          = speed_profile.s_to_acc.lower_bound( s2 )->second;
+
+    initial_trajectory.states.push_back( state );
 
     ++it;
     ++next_it;

@@ -105,7 +105,7 @@ private:
   double dt                        = 0.1; // 10ms frequency of the node
   double wheelbase                 = 2.69;
   double max_forward_speed         = 13.6;
-  double max_reverse_speed         = -2.0;
+  double max_reverse_speed         = -5.0;
   double max_steering_velocity     = 0.5;
   double max_steering_acceleration = 0.5;
 

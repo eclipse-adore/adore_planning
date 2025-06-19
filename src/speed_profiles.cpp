@@ -66,6 +66,7 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
 {
   // Clear previous speed profile
   s_to_speed.clear();
+  s_to_acc.clear();
 
   // Compute curvature-based speed limits
   std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, initial_s, length );
@@ -109,14 +110,14 @@ SpeedProfile::backward_pass( MapPointIter& previous_it, const adore::map::Route&
 
     double idm_acc = idm::calculate_idm_acc( length, length, s_to_speed[s_prev], desired_time_headway, safety_distance, s_to_speed[s_curr],
                                              max_deceleration, 0.0 );
-    idm_acc        = std::clamp( idm_acc, -max_deceleration, max_acceleration );
+    idm_acc        = std::clamp( idm_acc, -max_acceleration, max_deceleration );
 
     double idm_speed = std::sqrt( s_to_speed[s_curr] * s_to_speed[s_curr] + 2.0 * idm_acc * delta_s );
 
     if( s_to_speed[s_prev] > idm_speed )
     {
       s_to_speed[s_prev] = idm_speed;
-      s_to_acc[s_prev]   = idm_acc;
+      s_to_acc[s_prev]   = -idm_acc;
     }
 
     if( previous_it == route.center_lane.begin() )
@@ -187,10 +188,6 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
     double max_curvature_speed = s_to_curvature.lower_bound( s_curr )->second;
     double max_legal_speed     = it->second.max_speed ? *it->second.max_speed : max_allowed_speed;
     double max_reachable_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_acceleration * delta_s );
-    std::cerr << "max reachable speed: " << max_reachable_speed << std::endl;
-    std::cerr << "max legal speed: " << max_legal_speed << std::endl;
-    std::cerr << "max curvature speed: " << max_curvature_speed << std::endl;
-
 
     double desired_speed = std::min( { max_curvature_speed, max_legal_speed, max_reachable_speed } );
 

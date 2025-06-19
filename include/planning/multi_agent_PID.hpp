@@ -23,6 +23,7 @@
 #include <Eigen/Dense>
 
 #include "adore_map/map.hpp"
+#include "adore_math/angles.h"
 
 #include "dynamics/traffic_participant.hpp"
 #include "dynamics/trajectory.hpp"
@@ -44,7 +45,7 @@ public:
   void plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set );
 
 
-  double       desired_acceleration        = 3.0;
+  double       desired_acceleration        = 2.0;
   double       desired_deceleration        = 3.0;
   double       max_lateral_acceleration    = 0.5;
   int          number_of_integration_steps = 40;
@@ -60,6 +61,7 @@ public:
   double k_obstacle_avoidance_longitudinal   = 0.0;
   double k_obstacle_avoidance_lateral        = 2.0;
   double k_sigmoid                           = 5.0;
+  double k_lateral_acc                       = 3.5;
 
   double lane_width   = 4.0;
   double min_distance = 8.0;

@@ -129,6 +129,19 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   auto& participant = traffic_participant_set.participants.at( id );
 
   double state_s = participant.route->get_s( current_state );
+  map::MapPoint current_position;
+  current_position.x = current_state.x;
+  current_position.y = current_state.y;
+  double lookahead_time = 6.0;
+  double curve_minimum_speed = 2.5;
+  double s_lookahead_point = std::max( 3.0, state_s + lookahead_time * current_state.vx );
+  map::MapPoint lookahead_point = participant.route->get_map_point_at_s( s_lookahead_point );
+  double reference_yaw = math::compute_yaw( current_position, lookahead_point );
+  double direction_error = math::normalize_angle( reference_yaw - current_state.yaw_angle );
+  if (current_state.vx < curve_minimum_speed)
+  {
+    direction_error = 0.0;
+  }
 
   double goal_dist = participant.route->get_length() - state_s;
 
@@ -141,12 +154,11 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   // 3. Compute the “desired velocity” from IDM logic
   double idm_velocity = compute_idm_velocity( closest_obstacle_distance, goal_dist, obstacle_speed, current_state );
   idm_velocity = std::max( 0.0, idm_velocity );
-  std::cerr << "idm velocity prediction: " << idm_velocity << std::endl;
 
   // 5. Construct base vehicle command: lane-following
   dynamics::VehicleCommand vehicle_command;
   vehicle_command.steering_angle = k_yaw * error_yaw + k_distance * error_lateral;
-  vehicle_command.acceleration   = -k_speed * ( current_state.vx - idm_velocity );
+  vehicle_command.acceleration   = -k_speed * ( current_state.vx - idm_velocity ) - k_lateral_acc * abs( direction_error );
 
   // 6. Fluid-dynamics repulsion from obstacles:
   //    Sum up repulsive “virtual velocities” for all obstacles, then
@@ -186,7 +198,6 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   // vehicle_command.steering_angle += lane_center_gain * alpha_center * error_lateral;
 
   // 9. Finally, clamp commands (accelerations, steering, etc.) to your vehicle limits
-  limits.max_steering_angle = 0.5;
   vehicle_command.clamp_within_limits( limits );
 
   return vehicle_command;
