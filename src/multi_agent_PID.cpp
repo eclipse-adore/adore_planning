@@ -150,6 +150,7 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
 
   // 2. Calculate the nearest obstacle distance & offset
   auto [closest_obstacle_distance, obstacle_speed, offset] = compute_distance_speed_offset_nearest_obstacle( traffic_participant_set, id );
+  std::cerr << "closest obstacle distance: " << closest_obstacle_distance << std::endl;
 
   // 3. Compute the “desired velocity” from IDM logic
   double idm_velocity = compute_idm_velocity( closest_obstacle_distance, goal_dist, obstacle_speed, current_state );

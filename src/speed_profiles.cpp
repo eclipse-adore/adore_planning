@@ -189,7 +189,7 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
     double max_legal_speed     = it->second.max_speed ? *it->second.max_speed : max_allowed_speed;
     double max_reachable_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_acceleration * delta_s );
 
-    double desired_speed = std::min( { max_curvature_speed, max_legal_speed, max_reachable_speed } );
+    double desired_speed = std::min( { max_curvature_speed, max_legal_speed } );
 
     double idm_acc = idm::calculate_idm_acc( route.get_length() - s_curr, object_distance, desired_speed, desired_time_headway,
                                              safety_distance, s_to_speed[s_prev], max_acceleration, object_speed );
