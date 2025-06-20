@@ -224,35 +224,56 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
 
   if( route.center_lane.size() < 3 )
   {
-    std::cerr << "Route has less than 3 points, cannot speed profile" << std::endl;
+    std::cerr << "Route has less than 3 points, cannot speed profile\n";
     return s_to_curvature;
   }
 
-  // Get the boundaries for the route segment
   auto begin_it = std::next( route.center_lane.lower_bound( initial_s ) );
   auto end_it   = route.center_lane.upper_bound( initial_s + length );
 
-  // Iterate over the route with a sliding window of 3 points
   for( auto it = begin_it; std::next( it ) != end_it; ++it )
   {
-    const auto& [prev_s, prev_point] = *std::prev( it );
-    const auto& [curr_s, curr_point] = *it;
-    const auto& [next_s, next_point] = *std::next( it );
-
-    // skip if points are too close
-    if( std::fabs( curr_s - prev_s ) < 1e-6 || std::fabs( next_s - curr_s ) < 1e-6 )
-    {
-      continue;
-    }
-
-    // Compute curvature
-    double curvature = adore::math::compute_curvature( prev_point.x, prev_point.y, curr_point.x, curr_point.y, next_point.x, next_point.y );
+    double s         = it->first;
+    double curvature = route.get_curvature_at_s( s );
     curvature        = std::min( curvature, max_curvature );
 
-    // Compute maximum speed for that curvature
-    double max_curve_speed = std::sqrt( max_lateral_acceleration / std::max( std::fabs( curvature ), 1e-6 ) );
-    s_to_curvature[curr_s] = max_curve_speed;
+    double vmax       = std::sqrt( max_lateral_acceleration / std::max( std::fabs( curvature ), 1e-6 ) );
+    s_to_curvature[s] = vmax;
   }
+
+  const int    half_win = 5; // k ⇒ window = 2k+1
+  const size_t N        = s_to_curvature.size();
+  if( N < 5 )
+    return s_to_curvature; // nothing to smooth
+
+  std::vector<double> keys, vals;
+  keys.reserve( N );
+  vals.reserve( N );
+  for( auto& kv : s_to_curvature )
+  {
+    keys.push_back( kv.first );
+    vals.push_back( kv.second );
+  }
+
+  std::vector<double> smoothed( vals );
+
+  for( size_t i = 0; i < N; ++i )
+  {
+    int lo = static_cast<int>( i ) - half_win;
+    int hi = lo + half_win * 2;
+    lo     = std::max( lo, 0 );
+    hi     = std::min( hi, static_cast<int>( N ) - 1 );
+
+    double sum = 0.0;
+    for( int j = lo; j <= hi; ++j )
+      sum += vals[j];
+    double avg = sum / ( hi - lo + 1 );
+
+    smoothed[i] = avg;
+  }
+
+  for( size_t i = 0; i < N; ++i )
+    s_to_curvature[keys[i]] = smoothed[i];
 
   return s_to_curvature;
 }
