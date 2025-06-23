@@ -211,9 +211,9 @@ get_distance_to_nearest_obstacle( const tk::spline& waypoint_spline_x, const tk:
 
 template<typename Line>
 dynamics::Trajectory
-waypoints_to_trajectory( const dynamics::VehicleStateDynamic& start_state, const Line& waypoints, double dt, double target_speed,
-                         const dynamics::VehicleCommandLimits& limits, const dynamics::TrafficParticipantSet& traffic_participants,
-                         const dynamics::PhysicalVehicleModel& model, double k_speed = 0.5, double k_lateral = 1.0, double k_heading = 2.0,
+waypoints_to_trajectory( const dynamics::VehicleStateDynamic& start_state, const Line& waypoints,
+                         const dynamics::TrafficParticipantSet& traffic_participants, const dynamics::PhysicalVehicleModel& model,
+                         double target_speed = 2.0, double dt = 0.1, double k_speed = 0.5, double k_lateral = 1.0, double k_heading = 2.0,
                          double cg_ratio = 0.5 )
 {
   dynamics::Trajectory trajectory;
@@ -271,7 +271,8 @@ waypoints_to_trajectory( const dynamics::VehicleStateDynamic& start_state, const
 
     // Set steering angle based on direction and lateral error
     control.steering_angle = heading_error * k_heading + lateral_error * k_lateral * current_state.vx;
-    control.clamp_within_limits( limits );
+
+    control.clamp_within_limits( model.params );
 
     // Update vehicle state using Euler integration
     current_state                = dynamics::integrate_euler( current_state, control, dt, model.motion_model );

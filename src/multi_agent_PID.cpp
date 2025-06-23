@@ -92,7 +92,8 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       participant.physical_parameters.wheelbase = 0.5;
 
     motion_models[id] = [params = participant.physical_parameters]( const dynamics::VehicleStateDynamic& state,
-                                                                    const dynamics::VehicleCommand& cmd ) -> dynamics::VehicleStateDynamic {
+                                                                    const dynamics::VehicleCommand& cmd ) -> dynamics::VehicleStateDynamic
+    {
       return dynamics::kinematic_bicycle_model( state, params, cmd );
     };
   }
@@ -111,6 +112,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       if( participant.route && !participant.route->center_lane.empty() )
       {
         vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id );
+        vehicle_command.clamp_within_limits( participant.physical_parameters );
       }
 
       next_state = dynamics::integrate_euler( current_state, vehicle_command, dt, motion_models[id] );
@@ -147,10 +149,6 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   dynamics::VehicleCommand vehicle_command;
   vehicle_command.steering_angle = k_yaw * error_yaw + k_distance * error_lateral;
   vehicle_command.acceleration   = -k_speed * ( current_state.vx - idm_velocity );
-
-  // 9. Finally, clamp commands (accelerations, steering, etc.) to your vehicle limits
-  limits.max_steering_angle = 0.5;
-  vehicle_command.clamp_within_limits( limits );
 
   return vehicle_command;
 }

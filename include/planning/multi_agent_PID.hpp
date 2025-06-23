@@ -65,9 +65,6 @@ public:
   double min_distance = 3.0;
   double time_headway = 3.0;
 
-  dynamics::VehicleCommandLimits limits;
-
-
 private:
 
   dynamics::VehicleStateDynamic   get_current_state( const dynamics::TrafficParticipant& participant );

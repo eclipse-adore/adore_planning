@@ -37,8 +37,10 @@ public:
   dynamics::Trajectory optimize_trajectory( const dynamics::VehicleStateDynamic& current_state,
                                             const dynamics::Trajectory&          reference_trajectory );
 
-  void set_parameters( const std::map<std::string, double>& params );
-  void set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
+  void         set_parameters( const std::map<std::string, double>& params );
+  void         set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
+  SpeedProfile speed_profile;
+
 
 private:
 
@@ -66,7 +68,6 @@ private:
   double idm_time_headway         = 5.0;
   double max_lateral_acceleration = 2.0;
 
-  SpeedProfile                  speed_profile;
   mas::OCP                      problem;
   dynamics::Trajectory          reference_trajectory; // Reference trajectory for the planner
   dynamics::VehicleStateDynamic start_state;          // Current state of the vehicle
