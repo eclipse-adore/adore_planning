@@ -37,7 +37,7 @@ MultiAgentPID::set_parameters( const std::map<std::string, double>& params )
   for( const auto& [name, value] : params )
   {
     if( name == "max_speed" )
-      max_speed = value;
+      max_allowed_speed = value;
     else if( name == "desired_acceleration" )
       desired_acceleration = value;
     else if( name == "desired_deceleration" )
@@ -78,8 +78,22 @@ MultiAgentPID::get_current_state( const dynamics::TrafficParticipant& participan
 void
 MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set )
 {
+  max_speed = max_allowed_speed;
   for( auto& [id, participant] : traffic_participant_set.participants )
   {
+    if ( id == 777 )
+    {
+      double current_ego_s  = participant.route->get_s( participant.state );
+      for ( int i=0; i<(participant.state.vx*participant.state.vx)/4.0 + 10.0; i++ )
+      {
+        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i );
+        if ( current_ego_map_point.max_speed.has_value() )
+        {
+          double max_speed_at_point = current_ego_map_point.max_speed.value();
+          max_speed = std::min( max_speed, max_speed_at_point );
+        }
+      }
+    }
     participant.trajectory = dynamics::Trajectory();
   }
   // Precompute motion model lambdas for each participant.

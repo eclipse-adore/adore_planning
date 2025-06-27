@@ -51,6 +51,7 @@ public:
   int          number_of_integration_steps = 160;
   double       dt                          = 0.05;
   const double min_point_distance          = 0.05;
+  double       max_allowed_speed           = 10.0;
   double       max_speed                   = 10.0;
 
   double obstacle_avoidance_offset_threshold = 1.0;
