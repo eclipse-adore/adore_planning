@@ -48,15 +48,15 @@ public:
   double       desired_acceleration        = 2.0;
   double       desired_deceleration        = 3.0;
   double       max_lateral_acceleration    = 0.5;
-  int          number_of_integration_steps = 40;
-  double       dt                          = 0.1;
+  int          number_of_integration_steps = 160;
+  double       dt                          = 0.05;
   const double min_point_distance          = 0.05;
   double       max_speed                   = 10.0;
 
   double obstacle_avoidance_offset_threshold = 1.0;
   double k_yaw                               = 8.0;
   double k_distance                          = 2.0;
-  double k_speed                             = 0.5;
+  double k_speed                             = 0.6;
   double k_goal_point                        = 10.0;
   double k_obstacle_avoidance_longitudinal   = 0.0;
   double k_obstacle_avoidance_lateral        = 2.0;

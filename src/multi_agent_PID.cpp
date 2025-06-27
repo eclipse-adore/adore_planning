@@ -96,7 +96,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
     };
   }
 
-  for( int i = 0; i < number_of_integration_steps; ++i )
+  for( int i = 0; i < number_of_integration_steps - 1; ++i )
   {
     for( auto& [id, participant] : traffic_participant_set.participants )
     {
@@ -104,6 +104,8 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
         participant.physical_parameters.wheelbase = 0.5;
       dynamics::VehicleStateDynamic next_state;
       dynamics::VehicleStateDynamic current_state = get_current_state( participant );
+      if ( i == 0)
+        participant.trajectory->states.push_back( current_state );
 
       dynamics::VehicleCommand vehicle_command = dynamics::VehicleCommand( 0.0, 0.0 );
 
@@ -154,7 +156,7 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   // 3. Compute the “desired velocity” from IDM logic
   double idm_velocity = compute_idm_velocity( closest_obstacle_distance, goal_dist, obstacle_speed, current_state );
   idm_velocity = std::max( 0.0, idm_velocity );
-
+  
   // 5. Construct base vehicle command: lane-following
   dynamics::VehicleCommand vehicle_command;
   vehicle_command.steering_angle = k_yaw * error_yaw + k_distance * error_lateral;
@@ -236,7 +238,14 @@ MultiAgentPID::compute_idm_velocity( double obstacle_distance, double goal_dista
 
 
   double effective_distance     = std::min( obstacle_distance, goal_distance );
-  double effective_min_distance = ( goal_distance < obstacle_distance ) ? 3.0 : min_distance;
+  double difference = obstacle_distance - goal_distance;
+  // double effective_min_distance = ( goal_distance < obstacle_distance ) ? 3.0 : min_distance;
+  // double effective_min_distance = - min_distance / ( 1 + std::exp( -0.5 * difference ) ) + min_distance;
+  double effective_min_distance = min_distance;
+  if( goal_distance < obstacle_distance )
+  {
+    effective_min_distance = 0.0;
+  }
 
   double s_star = effective_min_distance + current_state.vx * time_headway
                 + current_state.vx * ( current_state.vx - obstacle_speed )
@@ -275,9 +284,6 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
       continue;
 
     dynamics::VehicleStateDynamic object_state = get_current_state( other_participant );
-    dynamics::VehicleStateDynamic future_object_state;
-    future_object_state.x = object_state.x + 2.0 * object_state.vx * cos( object_state.yaw_angle );
-    future_object_state.y = object_state.y + 2.0 * object_state.vx * sin( object_state.yaw_angle );
     double                        object_s     = route.get_s( object_state );
     double                        distance     = object_s - ref_current_s;
 
@@ -287,11 +293,11 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
     auto pose_at_distance = route.get_pose_at_s( object_s );
 
     // Compute signed lateral offset (negative = left, positive = right)
-    double dx             = future_object_state.x - pose_at_distance.x;
-    double dy             = future_object_state.y - pose_at_distance.y;
+    double dx             = object_state.x - pose_at_distance.x;
+    double dy             = object_state.y - pose_at_distance.y;
     double current_offset = -dx * std::sin( pose_at_distance.yaw ) + dy * std::cos( pose_at_distance.yaw );
 
-    if( std::abs( current_offset ) > 0.5 * lane_width )
+    if( std::abs( current_offset ) > 2.0 * lane_width )
       continue;
 
     // if( std::abs( current_offset ) > obstacle_avoidance_offset_threshold )
@@ -303,7 +309,8 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
     if( distance < closest_distance )
     {
       closest_distance      = distance;
-      obstacle_speed        = object_state.vx;
+      obstacle_speed        = object_state.vx * cos( math::normalize_angle( object_state.yaw_angle - ref_participant.state.yaw_angle ) );
+      obstacle_speed = std::max( 0.0, obstacle_speed );
       offset_closest_object = current_offset;
     }
   }
