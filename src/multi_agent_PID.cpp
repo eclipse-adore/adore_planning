@@ -79,18 +79,25 @@ void
 MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set )
 {
   max_speed = max_allowed_speed;
+  double ego_goal_distance = std::numeric_limits<double>::max();
   for( auto& [id, participant] : traffic_participant_set.participants )
   {
     if ( id == 777 )
     {
       double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<(participant.state.vx*participant.state.vx)/4.0 + 10.0; i++ )
+      for ( int i=0; i<50.0; i++ )
       {
         auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i );
         if ( current_ego_map_point.max_speed.has_value() )
         {
           double max_speed_at_point = current_ego_map_point.max_speed.value();
-          max_speed = std::min( max_speed, max_speed_at_point );
+          // max_speed = std::min( max_speed, max_speed_at_point );
+          if ( current_ego_map_point.max_speed.value() == 0 )
+          {
+            ego_goal_distance = participant.route->get_s( current_ego_map_point ) - current_ego_s;
+            std::cerr << "ego goal distance: " << ego_goal_distance << std::endl;
+            break;
+          }
         }
       }
     }
@@ -125,7 +132,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
 
       if( participant.route && !participant.route->center_lane.empty() )
       {
-        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id );
+        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id, ego_goal_distance );
       }
 
       next_state = dynamics::integrate_euler( current_state, vehicle_command, dt, motion_models[id] );
@@ -140,7 +147,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
 
 dynamics::VehicleCommand
 MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   current_state,
-                                        const dynamics::TrafficParticipantSet& traffic_participant_set, const int id )
+                                        const dynamics::TrafficParticipantSet& traffic_participant_set, const int id, const double& ego_goal_distance )
 {
   auto& participant = traffic_participant_set.participants.at( id );
 
@@ -160,6 +167,12 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   }
 
   double goal_dist = participant.route->get_length() - state_s;
+  if ( id == 777 )
+  {
+    goal_dist = std::min( goal_dist, ego_goal_distance );
+  }else{
+    max_speed = participant.state.vx;
+  }
 
   // 1. Compute lane-following (center-line) errors
   auto [error_lateral, error_yaw] = compute_lane_following_errors( current_state, participant );
@@ -311,7 +324,7 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
     double dy             = object_state.y - pose_at_distance.y;
     double current_offset = -dx * std::sin( pose_at_distance.yaw ) + dy * std::cos( pose_at_distance.yaw );
 
-    if( std::abs( current_offset ) > 2.0 * lane_width )
+    if( std::abs( current_offset ) > 0.5 * lane_width )
       continue;
 
     // if( std::abs( current_offset ) > obstacle_avoidance_offset_threshold )

@@ -76,7 +76,7 @@ private:
   dynamics::VehicleStateDynamic   get_current_state( const dynamics::TrafficParticipant& participant );
   adore::dynamics::VehicleCommand compute_vehicle_command( const adore::dynamics::VehicleStateDynamic&   current_state,
                                                            const adore::dynamics::TrafficParticipantSet& traffic_participant_set,
-                                                           const int                                     id );
+                                                           const int                                     id, const double& ego_goal_distance );
 
   std::pair<double, double> compute_lane_following_errors( const dynamics::VehicleStateDynamic& current_state,
                                                            const dynamics::TrafficParticipant&  participant );
