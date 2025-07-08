@@ -109,7 +109,7 @@ TrajectoryPlanner::optimize_trajectory( const dynamics::VehicleStateDynamic& cur
 }
 
 void
-TrajectoryPlanner::solve_problem()
+TrajectoryPlanner::solve_problem() // THIS ONE WORKS
 {
   mas::SolverParams params;
   params["max_iterations"] = solver_params.max_iterations;
@@ -125,7 +125,7 @@ TrajectoryPlanner::solve_problem()
   auto solve_with = [&]( auto&& solver, double max_ms ) {
     params["max_ms"] = max_ms;
     solver.set_params( params );
-    solver.solve( problem );
+    solver.solve( *problem );
   };
 
   // first pass with collocation
@@ -138,12 +138,12 @@ dynamics::Trajectory
 TrajectoryPlanner::extract_trajectory()
 {
   dynamics::Trajectory trajectory;
-  trajectory.states.reserve( problem.horizon_steps );
-  for( size_t i = 0; i < problem.horizon_steps; ++i )
+  trajectory.states.reserve( problem->horizon_steps );
+  for( size_t i = 0; i < problem->horizon_steps; ++i )
   {
     dynamics::VehicleStateDynamic state;
-    auto                          x = problem.best_states.col( i );
-    auto                          u = problem.best_controls.col( i );
+    auto                          x = problem->best_states.col( i );
+    auto                          u = problem->best_controls.col( i );
 
     state.x              = x( 0 );
     state.y              = x( 1 );
@@ -163,27 +163,27 @@ TrajectoryPlanner::extract_trajectory()
 void
 TrajectoryPlanner::setup_problem()
 {
-  problem = mas::OCP();
+  problem = std::make_shared<mas::OCP>();
 
-  problem.state_dim     = 4;
-  problem.control_dim   = 2;
-  problem.horizon_steps = horizon_steps;
-  problem.dt            = dt;
-  problem.initial_state = Eigen::VectorXd( 4 );
-  problem.dynamics      = get_planning_model( speed_profile.vehicle_params );
+  problem->state_dim     = 4;
+  problem->control_dim   = 2;
+  problem->horizon_steps = horizon_steps;
+  problem->dt            = dt;
+  problem->initial_state = Eigen::VectorXd( 4 );
+  problem->dynamics      = get_planning_model( speed_profile.vehicle_params );
 
 
-  Eigen::VectorXd lower_bounds( problem.control_dim ), upper_bounds( problem.control_dim );
+  Eigen::VectorXd lower_bounds( problem->control_dim ), upper_bounds( problem->control_dim );
   lower_bounds << -speed_profile.vehicle_params.steering_angle_max, speed_profile.vehicle_params.acceleration_min;
   upper_bounds << speed_profile.vehicle_params.steering_angle_max, speed_profile.vehicle_params.acceleration_max;
-  problem.input_lower_bounds = lower_bounds;
-  problem.input_upper_bounds = upper_bounds;
-  problem.stage_cost         = make_trajectory_cost( reference_trajectory );
-  problem.terminal_cost      = []( const mas::State& x ) -> double { return 0.0; };
+  problem->input_lower_bounds = lower_bounds;
+  problem->input_upper_bounds = upper_bounds;
+  problem->stage_cost         = make_trajectory_cost( reference_trajectory );
+  problem->terminal_cost      = []( const mas::State& x ) -> double { return 0.0; };
 
-  problem.initial_state << start_state.x, start_state.y, start_state.yaw_angle, start_state.vx;
-  problem.initialize_problem();
-  problem.verify_problem();
+  problem->initial_state << start_state.x, start_state.y, start_state.yaw_angle, start_state.vx;
+  problem->initialize_problem();
+  problem->verify_problem();
 }
 } // namespace planner
 } // namespace adore

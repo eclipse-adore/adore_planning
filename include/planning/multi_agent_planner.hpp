@@ -24,32 +24,26 @@ namespace adore
 namespace planner
 {
 
-class TrajectoryPlanner
+class MultiAgentPlanner
 {
 
 
 public:
 
+  dynamics::TrafficParticipantSet plan_all_participants( const dynamics::TrafficParticipantSet& traffic_participants,
+                                                         const std::shared_ptr<map::Map>&       local_map );
 
-  dynamics::Trajectory plan_route_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
-                                              const dynamics::TrafficParticipantSet& traffic_participants );
-
-  dynamics::Trajectory optimize_trajectory( const dynamics::VehicleStateDynamic& current_state,
-                                            const dynamics::Trajectory&          reference_trajectory );
-
-  void         set_parameters( const std::map<std::string, double>& params );
-  void         set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
-  SpeedProfile speed_profile;
+  void set_parameters( const std::map<std::string, double>& params );
 
 
 private:
 
   struct SolverParams
   {
-    double max_iterations = 1000;
+    double max_iterations = 30;
     double tolerance      = 1e-3;
     double max_ms         = 50;
-    double debug          = 1.0;
+    double debug          = 0.0;
   } solver_params;
 
   struct PlannerCostWeights
@@ -57,26 +51,32 @@ private:
     double lane_error     = 10.0;
     double long_error     = 0.0;
     double speed_error    = 10.0;
-    double heading_error  = 10.0;
+    double heading_error  = 0.0;
     double steering_angle = 1.0;
-    double acceleration   = 0.1;
+    double acceleration   = 0.5;
+    double proximity      = 0.5;
   } weights;
 
   double dt                       = 0.1;
-  size_t horizon_steps            = 30;
+  size_t horizon_steps            = 20;
   double ref_traj_length          = 100;
   double idm_time_headway         = 5.0;
   double max_lateral_acceleration = 2.0;
 
-  std::shared_ptr<mas::OCP>     problem;
-  dynamics::Trajectory          reference_trajectory; // Reference trajectory for the planner
-  dynamics::VehicleStateDynamic start_state;          // Current state of the vehicle
+  dynamics::TrafficParticipantSet traffic_participants;
 
-  void                   setup_problem();
+  mas::MultiAgentAggregator aggregator;
+
+  std::shared_ptr<map::Map> local_map;
+
+
+  mas::OCP create_single_ocp( size_t index );
+
   mas::StageCostFunction make_trajectory_cost( const dynamics::Trajectory& ref_traj );
   mas::MotionModel       get_planning_model( const dynamics::PhysicalVehicleParameters& params );
-  dynamics::Trajectory   extract_trajectory();
+  void                   extract_trajectories();
   void                   solve_problem();
+  void                   assign_routes();
 };
 
 } // namespace planner
