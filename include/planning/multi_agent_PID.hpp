@@ -42,7 +42,7 @@ public:
   MultiAgentPID();
 
   void set_parameters( const std::map<std::string, double>& params );
-  void plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set );
+  int plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set );
 
 
   double       desired_acceleration        = 2.0;
@@ -67,6 +67,12 @@ public:
   double lane_width   = 4.0;
   double min_distance = 8.0;
   double time_headway = 3.0;
+
+  int overview_status = 0;
+  // 0 for driving
+  // 1 for stopping at participant
+  // 2 for stopping at goal
+  // 3 for stopping at traffic light
 
   dynamics::VehicleCommandLimits limits;
 

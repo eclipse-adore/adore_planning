@@ -75,7 +75,7 @@ MultiAgentPID::get_current_state( const dynamics::TrafficParticipant& participan
   return participant.state;
 }
 
-void
+int
 MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set )
 {
   max_speed = max_allowed_speed;
@@ -85,7 +85,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
     if ( id == 777 )
     {
       double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<50.0; i++ )
+      for ( int i=0; i<120.0; i++ )
       {
         auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i );
         if ( current_ego_map_point.max_speed.has_value() )
@@ -143,6 +143,8 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       participant.trajectory->states.push_back( next_state );
     }
   }
+
+  return overview_status; 
 }
 
 dynamics::VehicleCommand
@@ -167,19 +169,32 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   }
 
   double goal_dist = participant.route->get_length() - state_s;
+  
+  // 1. Compute lane-following (center-line) errors
+  auto [error_lateral, error_yaw] = compute_lane_following_errors( current_state, participant );
+  
+  // 2. Calculate the nearest obstacle distance & offset
+  auto [closest_obstacle_distance, obstacle_speed, offset] = compute_distance_speed_offset_nearest_obstacle( traffic_participant_set, id );
+  
   if ( id == 777 )
   {
+    if ( ego_goal_distance < goal_dist && ego_goal_distance < 20 )
+    {
+      overview_status = 3;
+    }
+    if( goal_dist < closest_obstacle_distance && goal_dist < 20 )
+    {
+      overview_status = 2;
+    }
+    if ( closest_obstacle_distance < 10 )
+    {
+      overview_status = 1;
+    }
     goal_dist = std::min( goal_dist, ego_goal_distance );
   }else{
     max_speed = participant.state.vx;
   }
-
-  // 1. Compute lane-following (center-line) errors
-  auto [error_lateral, error_yaw] = compute_lane_following_errors( current_state, participant );
-
-  // 2. Calculate the nearest obstacle distance & offset
-  auto [closest_obstacle_distance, obstacle_speed, offset] = compute_distance_speed_offset_nearest_obstacle( traffic_participant_set, id );
-
+  
   // 3. Compute the “desired velocity” from IDM logic
   double idm_velocity = compute_idm_velocity( closest_obstacle_distance, goal_dist, obstacle_speed, current_state );
   idm_velocity = std::max( 0.0, idm_velocity );
