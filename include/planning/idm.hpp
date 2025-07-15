@@ -13,7 +13,7 @@ calculate_idm_acc( double dist_goal, double dist_object, double max_speed, doubl
                    double max_acc, double speed_object )
 
 {
-  double distance_for_idm = std::min( dist_object, dist_goal );
+  double distance_for_idm = std::min( dist_object, dist_goal + dist_headway );
 
 
   double s_star = dist_headway + current_speed * time_headway + current_speed * ( current_speed - speed_object ) / ( 2 * sqrt( max_acc ) );
