@@ -49,20 +49,16 @@ private:
 
   struct PlannerCostWeights
   {
-    double lane_error           = 10.0;
-    double long_error           = 0.0;
-    double speed_error          = 1.0;
-    double heading_error        = 1.0;
-    double steering_angle       = 1.0;
-    double acceleration         = 0.5;
-    double proximity            = 0.0;
-    double lateral_acceleration = 0.0;
+    double lane_error     = 10.0;
+    double speed_error    = 1.0;
+    double heading_error  = 1.0;
+    double steering_angle = 1.0;
   } weights;
 
   double dt                       = 0.1;
   size_t horizon_steps            = 20;
-  double ref_traj_length          = 100;
   double idm_time_headway         = 5.0;
+  double desired_distance         = 3.0;
   double max_lateral_acceleration = 2.0;
 
   double max_speed = 5.0;

@@ -16,16 +16,12 @@ MultiAgentPlanner::set_parameters( const std::map<std::string, double>& params )
       horizon_steps = static_cast<size_t>( value );
     if( name == "lane_error" )
       weights.lane_error = value;
-    if( name == "long_error" )
-      weights.long_error = value;
     if( name == "speed_error" )
       weights.speed_error = value;
     if( name == "heading_error" )
       weights.heading_error = value;
     if( name == "steering_angle" )
       weights.steering_angle = value;
-    if( name == "acceleration" )
-      weights.acceleration = value;
     if( name == "max_iterations" )
       solver_params.max_iterations = value;
     if( name == "tolerance" )
@@ -38,8 +34,8 @@ MultiAgentPlanner::set_parameters( const std::map<std::string, double>& params )
       max_lateral_acceleration = value;
     if( name == "idm_time_headway" )
       idm_time_headway = value;
-    if( name == "ref_traj_length" && value > 0 )
-      ref_traj_length = value;
+    if( name == "desired_distance" )
+      desired_distance = value;
   }
 }
 
@@ -127,8 +123,9 @@ MultiAgentPlanner::create_single_ocp( size_t id )
     const double cyaw    = math::fast_cos( heading );
     const double syaw    = math::fast_sin( heading );
 
-    double max_dist  = 100.0;
-    double speed_obj = 0.0;
+    double max_dist   = 100.0;
+    double speed_obj  = 0.0;
+    double other_size = 0.0;
 
     for( const auto& [other_id, other_ocp_ptr] : aggregator.agent_ocps )
     {
@@ -145,21 +142,25 @@ MultiAgentPlanner::create_single_ocp( size_t id )
 
       if( long_dist > 2 && std::fabs( lat_dist ) < 3 && long_dist < max_dist )
       {
-        max_dist  = long_dist;
-        speed_obj = other_state( 3 );
+        max_dist                = long_dist;
+        speed_obj               = other_state( 3 );
+        auto& other_participant = traffic_participants.participants.at( id );
+        other_size              = other_participant.physical_parameters.get_total_length();
       }
     }
+    constexpr double DEFAULT_ROUTE_DIST = 100;
 
-    double remaining_route_length = participant.route ? participant.route->get_length() - x( 4 ) : 100;
+    double remaining_route_length = participant.route ? participant.route->get_length() - x( 4 ) : DEFAULT_ROUTE_DIST;
 
-    double idm_acc = idm::calculate_idm_acc( remaining_route_length, max_dist, guide_speed, idm_time_headway, 8.0, x( 3 ),
+    const double to_front = participant.physical_parameters.wheelbase + participant.physical_parameters.front_axle_to_front_border;
+
+    const double spacing = desired_distance + to_front + other_size / 2;
+
+    double idm_acc = idm::calculate_idm_acc( remaining_route_length, max_dist, guide_speed, idm_time_headway, spacing, x( 3 ),
                                              participant.physical_parameters.steering_angle_max, speed_obj );
 
     cost += weights.speed_error * std::pow( idm_acc - u( 1 ), 2 );
-    // control effort
     cost += weights.steering_angle * u( 0 ) * u( 0 );
-
-
     return cost;
   };
 
@@ -184,10 +185,10 @@ MultiAgentPlanner::solve_problem()
   mas::SolverParams inner_params{
     { "max_iterations",   60 },
     {      "tolerance", 1e-5 },
-    {         "max_ms",   80 },
-    {          "debug",  1.0 }
+    {         "max_ms",   20 },
+    {          "debug",  0.0 }
   };
-  const size_t max_outer = 1;
+  const size_t max_outer = 3;
 
   // create ocp for each participant
   for( auto& [id, participant] : traffic_participants.participants )
