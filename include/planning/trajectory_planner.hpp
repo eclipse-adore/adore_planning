@@ -37,10 +37,8 @@ public:
   dynamics::Trajectory optimize_trajectory( const dynamics::VehicleStateDynamic& current_state,
                                             const dynamics::Trajectory&          reference_trajectory );
 
-  void         set_parameters( const std::map<std::string, double>& params );
-  void         set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
-  SpeedProfile speed_profile;
-
+  void set_parameters( const std::map<std::string, double>& params );
+  void set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
 
 private:
 
@@ -54,9 +52,9 @@ private:
 
   struct PlannerCostWeights
   {
-    double lane_error     = 10.0;
-    double long_error     = 0.0;
-    double speed_error    = 10.0;
+    double lane_error     = 5.0;
+    double long_error     = 0.1;
+    double speed_error    = 5.0;
     double heading_error  = 10.0;
     double steering_angle = 1.0;
     double acceleration   = 0.1;
@@ -64,13 +62,16 @@ private:
 
   double dt                       = 0.1;
   size_t horizon_steps            = 30;
-  double ref_traj_length          = 100;
+  double ref_traj_length          = 200;
   double idm_time_headway         = 5.0;
   double max_lateral_acceleration = 2.0;
+  double max_speed                = 13.0;
 
   std::shared_ptr<mas::OCP>     problem;
   dynamics::Trajectory          reference_trajectory; // Reference trajectory for the planner
   dynamics::VehicleStateDynamic start_state;          // Current state of the vehicle
+
+  dynamics::PhysicalVehicleParameters vehicle_params;
 
   void                   setup_problem();
   mas::StageCostFunction make_trajectory_cost( const dynamics::Trajectory& ref_traj );

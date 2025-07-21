@@ -23,13 +23,20 @@ double
 SpeedProfile::get_speed_at_s( double s ) const
 {
   auto it = s_to_speed.lower_bound( s );
-  if( it == s_to_speed.end() )
+  if( it == s_to_speed.end() ) // right-side extrapolation
+
   {
-    return s_to_speed.rbegin()->second;
+    auto   it_last = s_to_speed.rbegin();
+    auto   it_prev = std::next( it_last );
+    double slope   = ( it_last->second - it_prev->second ) / +( it_last->first - it_prev->first );
+    return it_last->second + slope * ( s - it_last->first );
   }
-  else if( it == s_to_speed.begin() )
+  else if( it == s_to_speed.begin() ) // left-side extrapolation
+
   {
-    return it->second;
+    auto   it_next = std::next( it );
+    double slope   = ( it_next->second - it->second ) / +( it_next->first - it->first );
+    return it->second + slope * ( s - it->first );
   }
   else
   {
@@ -72,11 +79,11 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
   std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, initial_s, length );
 
   // Initialize starting conditions
-  s_to_speed[initial_s] = initial_speed;
+  auto   it          = route.center_lane.lower_bound( initial_s );
+  double s_curr      = it->first;
+  s_to_speed[s_curr] = initial_speed;
 
-  auto it     = route.center_lane.lower_bound( initial_s );
-  auto end_it = route.center_lane.lower_bound( initial_s + length );
-  end_it--;
+  auto end_it = std::prev( route.center_lane.lower_bound( initial_s + length ) );
 
   if( it == route.center_lane.end() )
   {
@@ -92,9 +99,8 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
   forward_pass( it, end_it, prev_it, s_to_curvature, route, traffic_participants, initial_time );
 
   // Backward Pass (Smoothing and Enforcing Deceleration Limits)
-  auto current_it  = std::prev( end_it );
+  auto current_it  = end_it; // now inclusive
   auto previous_it = std::prev( current_it );
-
   backward_pass( previous_it, route, initial_s, current_it, length );
 }
 
@@ -235,9 +241,9 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
   {
     double s         = it->first;
     double curvature = route.get_curvature_at_s( s );
-    curvature        = std::min( curvature, max_curvature );
+    curvature        = std::min( std::fabs( curvature ), max_curvature );
 
-    double vmax       = std::sqrt( max_lateral_acceleration / std::max( std::fabs( curvature ), 1e-6 ) );
+    double vmax       = std::sqrt( max_lateral_acceleration / std::max( curvature, 1e-6 ) );
     s_to_curvature[s] = vmax;
   }
 

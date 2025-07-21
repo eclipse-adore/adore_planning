@@ -1,6 +1,9 @@
 #include "planning/trajectory_planner.hpp"
 
+#include "adore_math/fast_trig.h"
+
 #include "controllers/iLQR.hpp"
+#include "planning/speed_profile_qp.hpp"
 
 namespace adore
 {
@@ -48,7 +51,7 @@ TrajectoryPlanner::set_parameters( const std::map<std::string, double>& params )
 void
 TrajectoryPlanner::set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params )
 {
-  speed_profile.vehicle_params = params;
+  vehicle_params = params;
 }
 
 mas::MotionModel
@@ -68,23 +71,30 @@ TrajectoryPlanner::get_planning_model( const dynamics::PhysicalVehicleParameters
 mas::StageCostFunction
 TrajectoryPlanner::make_trajectory_cost( const dynamics::Trajectory& ref_traj )
 {
-  return [ref_traj, weights = weights, dt = dt]( const mas::State& x, const mas::Control& u, std::size_t k ) -> double {
+  return [start_state = start_state, ref_traj = ref_traj, weights = weights, dt = dt]( const mas::State& x, const mas::Control& u,
+                                                                                       std::size_t k ) -> double {
+    double cost = 0.0;
+
     const double t   = k * dt;
     const auto   ref = ref_traj.get_state_at_time( t );
 
     const double dx = x( 0 ) - ref.x;
     const double dy = x( 1 ) - ref.y;
 
-    const double c = std::cos( ref.yaw_angle );
-    const double s = std::sin( ref.yaw_angle );
+    const double c = math::fast_cos( ref.yaw_angle );
+    const double s = math::fast_sin( ref.yaw_angle );
 
     const double lon_err = dx * c + dy * s;
     const double lat_err = -dx * s + dy * c;
     const double hdg_err = math::normalize_angle( x( 2 ) - ref.yaw_angle );
     const double spd_err = x( 3 ) - ref.vx;
 
-    return weights.lane_error * lat_err * lat_err + weights.long_error * lon_err * lon_err + weights.heading_error * hdg_err * hdg_err
-         + weights.speed_error * spd_err * spd_err + weights.steering_angle * u( 0 ) * u( 0 ) + weights.acceleration * u( 1 ) * u( 1 );
+    cost += weights.lane_error * lat_err * lat_err;
+    cost += weights.long_error * lon_err * lon_err;
+    cost += weights.heading_error * hdg_err * hdg_err;
+    cost += weights.speed_error * spd_err * spd_err;
+    cost += weights.steering_angle * u( 0 ) * u( 0 ) + weights.acceleration * u( 1 ) * u( 1 );
+    return cost;
   };
 }
 
@@ -92,10 +102,13 @@ dynamics::Trajectory
 TrajectoryPlanner::plan_route_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                           const dynamics::TrafficParticipantSet& traffic_participants )
 {
-  double initial_s = latest_route.get_s( current_state );
+  double       initial_s = latest_route.get_s( current_state );
+  SpeedProfile speed_profile;
+  speed_profile.vehicle_params = vehicle_params;
   speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, current_state.time,
                                                       max_lateral_acceleration, idm_time_headway, ref_traj_length );
-  return optimize_trajectory( current_state, generate_trajectory_from_speed_profile( speed_profile, latest_route, dt ) );
+  auto ref_traj = generate_trajectory_from_speed_profile( speed_profile, latest_route, dt );
+  return optimize_trajectory( current_state, ref_traj );
 }
 
 dynamics::Trajectory
@@ -147,15 +160,14 @@ TrajectoryPlanner::extract_trajectory()
 
     state.x              = x( 0 );
     state.y              = x( 1 );
-    state.yaw_angle      = x( 2 );
+    state.yaw_angle      = math::normalize_angle( x( 2 ) );
     state.vx             = x( 3 );
     state.time           = start_state.time + i * dt;
-    state.steering_angle = u( 0 );
+    state.steering_angle = math::normalize_angle( u( 0 ) );
     state.ax             = u( 1 );
 
     trajectory.states.push_back( state );
   }
-  trajectory.adjust_start_time( start_state.time );
 
   return trajectory;
 }
@@ -170,12 +182,12 @@ TrajectoryPlanner::setup_problem()
   problem->horizon_steps = horizon_steps;
   problem->dt            = dt;
   problem->initial_state = Eigen::VectorXd( 4 );
-  problem->dynamics      = get_planning_model( speed_profile.vehicle_params );
+  problem->dynamics      = get_planning_model( vehicle_params );
 
 
   Eigen::VectorXd lower_bounds( problem->control_dim ), upper_bounds( problem->control_dim );
-  lower_bounds << -speed_profile.vehicle_params.steering_angle_max, speed_profile.vehicle_params.acceleration_min;
-  upper_bounds << speed_profile.vehicle_params.steering_angle_max, speed_profile.vehicle_params.acceleration_max;
+  lower_bounds << -vehicle_params.steering_angle_max, vehicle_params.acceleration_min;
+  upper_bounds << vehicle_params.steering_angle_max, vehicle_params.acceleration_max;
   problem->input_lower_bounds = lower_bounds;
   problem->input_upper_bounds = upper_bounds;
   problem->stage_cost         = make_trajectory_cost( reference_trajectory );
