@@ -178,6 +178,7 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   
   if ( id == 777 )
   {
+    // std::cerr << "closest obstacle distance: " << closest_obstacle_distance << std::endl;
     if ( ego_goal_distance < goal_dist && ego_goal_distance < 20 )
     {
       overview_status = 3;
@@ -197,6 +198,12 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   
   // 3. Compute the “desired velocity” from IDM logic
   double idm_velocity = compute_idm_velocity( closest_obstacle_distance, goal_dist, obstacle_speed, current_state );
+  // if ( id == 777 )
+  // {
+  //   std::cerr << "idm velocity: " << idm_velocity << std::endl;
+  //   std::cerr << "goal distance: " << goal_dist << std::endl;
+  //   std::cerr << "obstacle speed: " << obstacle_speed << std::endl;
+  // }
   idm_velocity = std::max( 0.0, idm_velocity );
   
   // 5. Construct base vehicle command: lane-following
@@ -292,6 +299,7 @@ MultiAgentPID::compute_idm_velocity( double obstacle_distance, double goal_dista
   double s_star = effective_min_distance + current_state.vx * time_headway
                 + current_state.vx * ( current_state.vx - obstacle_speed )
                     / ( 2 * std::sqrt( desired_acceleration * desired_deceleration ) );
+  // std::cerr << "idm acceleration: " << current_state.vx << " " << s_star << " " << effective_min_distance << std::endl;
 
   return current_state.vx
        + desired_acceleration * ( 1 - std::pow( current_state.vx / max_speed, 4 ) - std::pow( s_star / effective_distance, 2 ) );

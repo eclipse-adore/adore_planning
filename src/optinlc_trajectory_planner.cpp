@@ -122,6 +122,7 @@ dynamics::Trajectory
 OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                            const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants )
 {
+  std::cerr << "wheelbase: " << wheelbase << " lateral weight: " << lateral_weight << " heading weight: " << heading_weight << std::endl;
   initial_s = latest_route.get_s( current_state );
   // route_to_piecewise_polynomial       reference_route = setup_optimizer_parameters_using_route( latest_route, current_state );
   prediction_to_piecewise_polynomial  ego_prediction  = setup_optimizer_parameters_using_prediction( traffic_participants, current_state );
@@ -190,7 +191,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     }
   }
 
-  double total_offset = 0.0;
+  double max_offset = 0.0;
   int valid_count = 0;
 
   for ( size_t i = 1; i < control_points; i++ )
@@ -200,7 +201,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     double dy = opt_x[i * state_size + Y] - opt_x[(i-1) * state_size + Y];
     double norm = std::hypot(dx, dy);
 
-    if (norm == 0.0)
+    if ( norm == 0.0 )
       continue;
 
     // Unit tangent and normal vectors
@@ -215,16 +216,17 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
 
     // Project delta onto normal direction
     double lateral_offset = delta_x * nx + delta_y * ny;
-    total_offset += std::abs(lateral_offset);
+    if ( std::abs( lateral_offset ) > max_offset )
+      max_offset = std::abs(lateral_offset);
     valid_count++;
   }
-  double projection = ( valid_count > 0 ) ? total_offset : 0.0;
+  double projection = max_offset;
   std::cerr << "projection: " << projection << std::endl;
-  if ( projection > 10 && bad_condition == false )
-  {
-    bad_condition = true;
-    bad_counter   += 1;
-  }
+  // if ( projection > 10 && bad_condition == false )
+  // {
+  //   bad_condition = true;
+  //   bad_counter   += 1;
+  // }
 
   dynamics::Trajectory planned_trajectory;
   for( size_t i = 0; i < control_points; i++ )
@@ -432,6 +434,8 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
   auto start_time = std::chrono::high_resolution_clock::now();
   prediction_to_piecewise_polynomial ego_prediction;
   dynamics::TrafficParticipant ego_vehicle;
+  std::cerr << "number of participants: " << traffic_participants.participants.size() << std::endl;
+  // std::cerr << "debug planner: " << traffic_participants.participants.at(0).id << std::endl;
   auto it = traffic_participants.participants.find( 777 );
   if ( it != traffic_participants.participants.end() ) 
   {
