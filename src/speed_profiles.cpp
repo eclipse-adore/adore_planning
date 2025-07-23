@@ -68,15 +68,14 @@ SpeedProfile::get_acc_at_s( double s ) const
 
 void
 SpeedProfile::generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                                    double initial_speed, double initial_s, double initial_time,
-                                                    double max_lateral_acceleration, double desired_time_headway, double length )
+                                                    double initial_speed, double initial_s, double initial_time, double length )
 {
   // Clear previous speed profile
   s_to_speed.clear();
   s_to_acc.clear();
 
   // Compute curvature-based speed limits
-  std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, max_lateral_acceleration, initial_s, length );
+  std::map<double, double> s_to_curvature = calculate_curvature_speeds( route, initial_s, length );
 
   // Initialize starting conditions
   auto   it          = route.center_lane.lower_bound( initial_s );
@@ -93,9 +92,9 @@ SpeedProfile::generate_from_route_and_participants( const map::Route& route, con
   auto prev_it = it;
   ++it;
 
-  safety_distance  = distance_headway + vehicle_params.wheelbase + vehicle_params.front_axle_to_front_border;
-  max_acceleration = vehicle_params.acceleration_max;
-  max_deceleration = -vehicle_params.acceleration_min;
+  safety_distance = comfort_settings.distance_headway + vehicle_params.wheelbase + vehicle_params.front_axle_to_front_border;
+  max_acc         = comfort_settings.max_acceleration;
+  max_decel       = -comfort_settings.min_acceleration;
   forward_pass( it, end_it, prev_it, s_to_curvature, route, traffic_participants, initial_time );
 
   // Backward Pass (Smoothing and Enforcing Deceleration Limits)
@@ -114,9 +113,9 @@ SpeedProfile::backward_pass( MapPointIter& previous_it, const adore::map::Route&
     double s_curr  = current_it->first;
     double delta_s = s_curr - s_prev;
 
-    double idm_acc = idm::calculate_idm_acc( length, length, s_to_speed[s_prev], desired_time_headway, safety_distance, s_to_speed[s_curr],
-                                             max_deceleration, 0.0 );
-    idm_acc        = std::clamp( idm_acc, -max_acceleration, max_deceleration );
+    double idm_acc = idm::calculate_idm_acc( length, length, s_to_speed[s_prev], comfort_settings.time_headway, safety_distance,
+                                             s_to_speed[s_curr], max_decel, 0.0 );
+    idm_acc        = std::clamp( idm_acc, -max_acc, max_decel );
 
     double idm_speed = std::sqrt( s_to_speed[s_curr] * s_to_speed[s_curr] + 2.0 * idm_acc * delta_s );
 
@@ -191,15 +190,16 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
       continue;
     }
 
-    double max_curvature_speed = s_to_curvature.lower_bound( s_curr )->second;
-    double max_legal_speed     = it->second.max_speed ? *it->second.max_speed : max_allowed_speed;
-    double max_reachable_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_acceleration * delta_s );
+    double max_curvature_speed  = s_to_curvature.lower_bound( s_curr )->second;
+    double max_legal_speed      = it->second.max_speed ? *it->second.max_speed : comfort_settings.max_speed;
+    max_legal_speed            *= comfort_settings.speed_fraction_of_limit;
+    double max_reachable_speed  = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * max_acc * delta_s );
 
     double desired_speed = std::min( { max_curvature_speed, max_legal_speed } );
 
-    double idm_acc = idm::calculate_idm_acc( route.get_length() - s_curr, object_distance, desired_speed, desired_time_headway,
-                                             safety_distance, s_to_speed[s_prev], max_acceleration, object_speed );
-    idm_acc        = std::clamp( idm_acc, -max_deceleration, max_acceleration );
+    double idm_acc = idm::calculate_idm_acc( route.get_length() - s_curr, object_distance, desired_speed, comfort_settings.time_headway,
+                                             safety_distance, s_to_speed[s_prev], max_acc, object_speed );
+    idm_acc        = std::clamp( idm_acc, -max_decel, max_acc );
 
     // Compute speed limits
     double idm_speed = std::sqrt( s_to_speed[s_prev] * s_to_speed[s_prev] + 2 * idm_acc * delta_s );
@@ -223,8 +223,7 @@ SpeedProfile::forward_pass( MapPointIter& it, MapPointIter& end_it, MapPointIter
 }
 
 std::map<double, double>
-SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s, double length,
-                                          double max_curvature )
+SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double initial_s, double length, double max_curvature )
 {
   std::map<double, double> s_to_curvature;
 
@@ -243,7 +242,7 @@ SpeedProfile::calculate_curvature_speeds( const adore::map::Route& route, double
     double curvature = route.get_curvature_at_s( s );
     curvature        = std::min( std::fabs( curvature ), max_curvature );
 
-    double vmax       = std::sqrt( max_lateral_acceleration / std::max( curvature, 1e-6 ) );
+    double vmax       = std::sqrt( comfort_settings.max_lateral_acceleration / std::max( curvature, 1e-6 ) );
     s_to_curvature[s] = vmax;
   }
 

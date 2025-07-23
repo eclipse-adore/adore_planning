@@ -23,6 +23,7 @@
 #include "adore_map/route.hpp"
 #include "adore_math/curvature.hpp"
 
+#include "dynamics/comfort_settings.hpp"
 #include "dynamics/physical_vehicle_parameters.hpp"
 #include "dynamics/traffic_participant.hpp"
 #include "dynamics/trajectory.hpp"
@@ -36,8 +37,7 @@ namespace planner
 
 struct SpeedProfile
 {
-  std::map<double, double> s_to_speed;
-  std::map<double, double> s_to_acc;
+
 
   using MapPointIter = std::map<double, adore::map::MapPoint>::const_iterator;
 
@@ -45,8 +45,7 @@ struct SpeedProfile
   double get_acc_at_s( double s ) const;
 
   void generate_from_route_and_participants( const map::Route& route, const dynamics::TrafficParticipantSet& traffic_participants,
-                                             double initial_speed, double initial_s, double initial_time, double max_lateral_acceleration,
-                                             double desired_time_headway, double length );
+                                             double initial_speed, double initial_s, double initial_time, double length );
 
   void backward_pass( MapPointIter& previous_it, const adore::map::Route& route, double initial_s, MapPointIter& current_it,
                       double length );
@@ -57,11 +56,17 @@ struct SpeedProfile
 
   SpeedProfile() {};
 
+  void
+  set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params )
+  {
+    vehicle_params = params;
+  }
 
-  double                              max_allowed_speed = 13.7; // 50 km/h in m/s, can be adjusted based on vehicle parameters
-  dynamics::PhysicalVehicleParameters vehicle_params;
-  double                              desired_time_headway = 3.0; // seconds
-  double                              distance_headway     = 3.0; // meters, safety distance ( after vehicle length )
+  void
+  set_comfort_settings( const dynamics::ComfortSettings& settings )
+  {
+    comfort_settings = settings;
+  }
 
   // Overloading the << operator
   friend std::ostream&
@@ -75,14 +80,21 @@ struct SpeedProfile
     return os;
   }
 
+  std::map<double, double> s_to_speed;
+  std::map<double, double> s_to_acc;
+
 private:
 
-  double max_deceleration;
-  double max_acceleration;
-  double safety_distance;
+  std::map<double, double>            calculate_curvature_speeds( const adore::map::Route& route, double initial_s, double length,
+                                                                  double max_curvature = 0.5 );
+  dynamics::PhysicalVehicleParameters vehicle_params;
+  dynamics::ComfortSettings           comfort_settings;
 
-  std::map<double, double> calculate_curvature_speeds( const adore::map::Route& route, double max_lateral_acceleration, double initial_s,
-                                                       double length, double max_curvature = 0.5 );
+
+  // default values overritten by comfort settings
+  double max_acc         = 2.0;  // [m/s^2] maximum acceleration
+  double max_decel       = -2.0; // [m/s^2]
+  double safety_distance = 3.0;  // [m] safety distance to the nearest object
 };
 
 static adore::dynamics::Trajectory

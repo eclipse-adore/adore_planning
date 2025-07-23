@@ -39,13 +39,16 @@ TrajectoryPlanner::set_parameters( const std::map<std::string, double>& params )
       solver_params.max_ms = value;
     if( name == "debug" )
       solver_params.debug = value;
-    if( name == "max_lateral_acceleration" )
-      max_lateral_acceleration = value;
-    if( name == "idm_time_headway" )
-      idm_time_headway = value;
     if( name == "ref_traj_length" && value > 0 )
       ref_traj_length = value;
   }
+}
+
+void
+TrajectoryPlanner::set_comfort_settings( const dynamics::ComfortSettings& settings )
+{
+  comfort_settings = settings;
+  comfort_settings.clamp( vehicle_params );
 }
 
 void
@@ -104,9 +107,10 @@ TrajectoryPlanner::plan_route_trajectory( const map::Route& latest_route, const 
 {
   double       initial_s = latest_route.get_s( current_state );
   SpeedProfile speed_profile;
-  speed_profile.vehicle_params = vehicle_params;
+  speed_profile.set_vehicle_parameters( vehicle_params );
+  speed_profile.set_comfort_settings( comfort_settings );
   speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, current_state.time,
-                                                      max_lateral_acceleration, idm_time_headway, ref_traj_length );
+                                                      ref_traj_length );
   auto ref_traj = generate_trajectory_from_speed_profile( speed_profile, latest_route, dt );
   return optimize_trajectory( current_state, ref_traj );
 }

@@ -13,6 +13,7 @@
 #include "adore_math/angles.h"
 #include "adore_math/distance.h"
 
+#include "dynamics/comfort_settings.hpp"
 #include "dynamics/traffic_participant.hpp"
 #include "dynamics/trajectory.hpp"
 #include "multi_agent_solver/models/single_track_model.hpp"
@@ -39,6 +40,7 @@ public:
 
   void set_parameters( const std::map<std::string, double>& params );
   void set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
+  void set_comfort_settings( const dynamics::ComfortSettings& settings );
 
 private:
 
@@ -60,18 +62,17 @@ private:
     double acceleration   = 0.1;
   } weights;
 
-  double dt                       = 0.1;
-  size_t horizon_steps            = 30;
-  double ref_traj_length          = 200;
-  double idm_time_headway         = 5.0;
-  double max_lateral_acceleration = 2.0;
-  double max_speed                = 13.0;
+  double dt              = 0.1;
+  size_t horizon_steps   = 30;
+  double ref_traj_length = 200;
 
   std::shared_ptr<mas::OCP>     problem;
   dynamics::Trajectory          reference_trajectory; // Reference trajectory for the planner
   dynamics::VehicleStateDynamic start_state;          // Current state of the vehicle
 
   dynamics::PhysicalVehicleParameters vehicle_params;
+  dynamics::ComfortSettings           comfort_settings;
+
 
   void                   setup_problem();
   mas::StageCostFunction make_trajectory_cost( const dynamics::Trajectory& ref_traj );
