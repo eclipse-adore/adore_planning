@@ -122,7 +122,6 @@ dynamics::Trajectory
 OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                            const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants )
 {
-  std::cerr << "wheelbase: " << wheelbase << " lateral weight: " << lateral_weight << " heading weight: " << heading_weight << std::endl;
   initial_s = latest_route.get_s( current_state );
   // route_to_piecewise_polynomial       reference_route = setup_optimizer_parameters_using_route( latest_route, current_state );
   prediction_to_piecewise_polynomial  ego_prediction  = setup_optimizer_parameters_using_prediction( traffic_participants, current_state );
@@ -221,7 +220,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     valid_count++;
   }
   double projection = max_offset;
-  std::cerr << "projection: " << projection << std::endl;
+  // std::cerr << "projection: " << projection << std::endl;
   // if ( projection > 10 && bad_condition == false )
   // {
   //   bad_condition = true;
@@ -434,7 +433,6 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
   auto start_time = std::chrono::high_resolution_clock::now();
   prediction_to_piecewise_polynomial ego_prediction;
   dynamics::TrafficParticipant ego_vehicle;
-  std::cerr << "number of participants: " << traffic_participants.participants.size() << std::endl;
   // std::cerr << "debug planner: " << traffic_participants.participants.at(0).id << std::endl;
   auto it = traffic_participants.participants.find( 777 );
   if ( it != traffic_participants.participants.end() ) 
