@@ -63,7 +63,7 @@ struct SpeedProfile
   }
 
   void
-  set_comfort_settings( const dynamics::ComfortSettings& settings )
+  set_comfort_settings( const std::shared_ptr<dynamics::ComfortSettings>& settings )
   {
     comfort_settings = settings;
   }
@@ -85,10 +85,10 @@ struct SpeedProfile
 
 private:
 
-  std::map<double, double>            calculate_curvature_speeds( const adore::map::Route& route, double initial_s, double length,
-                                                                  double max_curvature = 0.5 );
-  dynamics::PhysicalVehicleParameters vehicle_params;
-  dynamics::ComfortSettings           comfort_settings;
+  std::map<double, double>                   calculate_curvature_speeds( const adore::map::Route& route, double initial_s, double length,
+                                                                         double max_curvature = 0.5 );
+  dynamics::PhysicalVehicleParameters        vehicle_params;
+  std::shared_ptr<dynamics::ComfortSettings> comfort_settings;
 
 
   // default values overritten by comfort settings

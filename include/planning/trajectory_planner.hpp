@@ -40,7 +40,7 @@ public:
 
   void set_parameters( const std::map<std::string, double>& params );
   void set_vehicle_parameters( const dynamics::PhysicalVehicleParameters& params );
-  void set_comfort_settings( const dynamics::ComfortSettings& settings );
+  void set_comfort_settings( const std::shared_ptr<dynamics::ComfortSettings>& settings );
 
 private:
 
@@ -70,8 +70,8 @@ private:
   dynamics::Trajectory          reference_trajectory; // Reference trajectory for the planner
   dynamics::VehicleStateDynamic start_state;          // Current state of the vehicle
 
-  dynamics::PhysicalVehicleParameters vehicle_params;
-  dynamics::ComfortSettings           comfort_settings;
+  dynamics::PhysicalVehicleParameters        vehicle_params;
+  std::shared_ptr<dynamics::ComfortSettings> comfort_settings;
 
 
   void                   setup_problem();
