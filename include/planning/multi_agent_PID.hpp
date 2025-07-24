@@ -42,7 +42,7 @@ public:
   MultiAgentPID();
 
   void set_parameters( const std::map<std::string, double>& params );
-  int plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set );
+  int plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set);
 
 
   double       desired_acceleration        = 2.0;
@@ -68,7 +68,6 @@ public:
   double min_distance = 8.0;
   double time_headway = 3.0;
 
-  int overview_status = 0;
   // 0 for driving
   // 1 for stopping at participant
   // 2 for stopping at goal
@@ -82,7 +81,8 @@ private:
   dynamics::VehicleStateDynamic   get_current_state( const dynamics::TrafficParticipant& participant );
   adore::dynamics::VehicleCommand compute_vehicle_command( const adore::dynamics::VehicleStateDynamic&   current_state,
                                                            const adore::dynamics::TrafficParticipantSet& traffic_participant_set,
-                                                           const int                                     id, const double& ego_goal_distance );
+                                                           const int                                     id, const double& ego_goal_distance,
+                                                           int &overview_status );
 
   std::pair<double, double> compute_lane_following_errors( const dynamics::VehicleStateDynamic& current_state,
                                                            const dynamics::TrafficParticipant&  participant );
