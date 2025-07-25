@@ -285,7 +285,7 @@ MultiAgentPID::compute_idm_velocity( double obstacle_distance, double goal_dista
   // double effective_min_distance = ( goal_distance < obstacle_distance ) ? 3.0 : min_distance;
   // double effective_min_distance = - min_distance / ( 1 + std::exp( -0.5 * difference ) ) + min_distance;
   double effective_min_distance = min_distance;
-  if( goal_distance < obstacle_distance )
+  if( goal_distance < obstacle_distance && obstacle_distance > 10.0 )
   {
     effective_min_distance = 0.0;
   }
@@ -327,6 +327,9 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
       continue;
 
     dynamics::VehicleStateDynamic object_state = get_current_state( other_participant );
+    dynamics::VehicleStateDynamic future_object_state;
+    future_object_state.x = object_state.x + 2.0 * object_state.vx * cos( object_state.yaw_angle );
+    future_object_state.y = object_state.y + 2.0 * object_state.vx * sin( object_state.yaw_angle );
     double                        object_s     = route.get_s( object_state );
     double                        distance     = object_s - ref_current_s;
 
@@ -336,8 +339,8 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
     auto pose_at_distance = route.get_pose_at_s( object_s );
 
     // Compute signed lateral offset (negative = left, positive = right)
-    double dx             = object_state.x - pose_at_distance.x;
-    double dy             = object_state.y - pose_at_distance.y;
+    double dx             = future_object_state.x - pose_at_distance.x;
+    double dy             = future_object_state.y - pose_at_distance.y;
     double current_offset = -dx * std::sin( pose_at_distance.yaw ) + dy * std::cos( pose_at_distance.yaw );
 
     if( std::abs( current_offset ) > 0.5 * lane_width )
