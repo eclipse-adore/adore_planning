@@ -39,10 +39,6 @@ OptiNLCTrajectoryPlanner::set_parameters( const std::map<std::string, double>& p
       lateral_weight = value;
     if( name == "heading_weight" )
       heading_weight = value;
-    if( name == "maximum_velocity" )
-      maximum_velocity = value;
-    if( name == "min_distance_to_vehicle_ahead" )
-      min_distance_to_vehicle_ahead = value;
   }
 }
 
@@ -60,7 +56,7 @@ OptiNLCTrajectoryPlanner::setup_constraints( OptiNLC_OCP<double, input_size, sta
   ocp.setUpdateStateLowerBounds( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, state_size> state_constraints;
     state_constraints.setConstant( -std::numeric_limits<double>::infinity() );
-    state_constraints[V]      = 0.0;
+    state_constraints[V]      = max_reverse_speed;
     state_constraints[S]      = 0.0;
     state_constraints[DELTA]  = -limits.max_steering_angle;
     state_constraints[dDELTA] = -max_steering_velocity;
@@ -122,8 +118,6 @@ dynamics::Trajectory
 OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                            const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants )
 {
-  initial_s = latest_route.get_s( current_state );
-  // route_to_piecewise_polynomial       reference_route = setup_optimizer_parameters_using_route( latest_route, current_state );
   prediction_to_piecewise_polynomial  ego_prediction  = setup_optimizer_parameters_using_prediction( traffic_participants, current_state );
   auto                          start_time      = std::chrono::high_resolution_clock::now();
   
@@ -137,19 +131,7 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
   OptiNLC_OCP<double, input_size, state_size, constraints_size, control_points> ocp( &options );
   
   // Set up reference route or trajectory
-  // setup_reference_route( reference_route );
   setup_reference_trajectory( ego_prediction );
-  // if( route_x.breaks.size() < 1 )
-  // {
-  //   dynamics::Trajectory empty_trajectory;
-  //   std::cerr << "end of route or invalid route received" << std::endl;
-  //   return empty_trajectory;
-  // }
-  
-  // Set up reference velocity
-  // setup_reference_velocity( latest_route, current_state, latest_map, traffic_participants );
-  // speed_profile.generate_from_route_and_participants( latest_route, traffic_participants, current_state.vx, initial_s, current_state.time,
-  //                                                     lateral_acceleration, desired_time_headway, 100.0 );
 
   // Set up dynamic model, objective, and constraints
   setup_dynamic_model( ocp );
@@ -220,12 +202,12 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     valid_count++;
   }
   double projection = max_offset;
-  // std::cerr << "projection: " << projection << std::endl;
-  // if ( projection > 10 && bad_condition == false )
-  // {
-  //   bad_condition = true;
-  //   bad_counter   += 1;
-  // }
+  std::cerr << "projection: " << projection << std::endl;
+  if ( projection > 1 && bad_condition == false )
+  {
+    bad_condition = true;
+    bad_counter   += 1;
+  }
 
   dynamics::Trajectory planned_trajectory;
   for( size_t i = 0; i < control_points; i++ )
@@ -271,19 +253,8 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
 {
   ocp.setDynamicModel( [&]( const VECTOR<double, state_size>& state, const VECTOR<double, input_size>& input,
                             VECTOR<double, state_size>& derivative, double, void* ) {
-    if( reference_velocity - state[V] > 0 )
-    {
-      tau = 2.5; // Higher value for smooth acceleration
-    }
-    else
-    {
-      tau = 1.0; // Lower value for quick braking
-    }
+   
     // Reference trajectory point at current progress
-    // int    index             = pp_route.findIndex( state[S], route_x );
-    // double reference_x       = pp_route.splineEvaluation( index, state[S], route_x );
-    // double reference_y       = pp_route.splineEvaluation( index, state[S], route_y );
-    // double reference_heading = pp_route.splineEvaluation( index, state[S], route_heading );
     int    index             = pp_prediction.findIndex( state[S], ego_prediction_x );
     double reference_x       = pp_prediction.splineEvaluation( index, state[S], ego_prediction_x );
     double reference_y       = pp_prediction.splineEvaluation( index, state[S], ego_prediction_y );
@@ -294,9 +265,8 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
     derivative[X]      = state[V] * cos( state[PSI] );                      // X derivative (velocity * cos(psi))
     derivative[Y]      = state[V] * sin( state[PSI] );                      // Y derivative (velocity * sin(psi))
     derivative[PSI]    = state[V] * tan( state[DELTA] ) / wheelbase;        // PSI derivative (steering angle / wheelbase)
-    // derivative[V]      = ( 1.0 / tau ) * ( reference_velocity - state[V] ); // Velocity derivative (first order)
-    // derivative[V]      = speed_profile.get_acc_at_s( state[S] );            // Velocity derivative (first order)
-    derivative[V]      = reference_ax; // std::min( reference_ax, curvature_acc );            // Velocity derivative (first order)
+    // derivative[V]      = speed_profile.get_acc_at_s( state[S] );         // Velocity derivative (first order)
+    derivative[V]      = reference_ax;                                      // Velocity derivative
     derivative[DELTA]  = state[dDELTA];                                     // Steering angle derivative
     derivative[dDELTA] = input[ddDELTA];                                    // Steering angle rate derivative
     derivative[S]      = state[V];                                          // Progress derivate (velocity)
@@ -326,14 +296,6 @@ OptiNLCTrajectoryPlanner::setup_dynamic_model( OptiNLC_OCP<double, input_size, s
 }
 
 void
-OptiNLCTrajectoryPlanner::setup_reference_route( route_to_piecewise_polynomial& reference_route )
-{
-  route_x       = reference_route.x;
-  route_y       = reference_route.y;
-  route_heading = reference_route.heading;
-}
-
-void
 OptiNLCTrajectoryPlanner::setup_reference_trajectory( prediction_to_piecewise_polynomial& ego_prediction )
 {
   ego_prediction_x        = ego_prediction.x;
@@ -348,84 +310,6 @@ OptiNLCTrajectoryPlanner::OptiNLCTrajectoryPlanner()
   set_parameters( {} );
 }
 
-route_to_piecewise_polynomial
-OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_route( const adore::map::Route&             latest_route,
-                                                                  const dynamics::VehicleStateDynamic& current_state )
-{
-  auto start_time = std::chrono::high_resolution_clock::now();
-
-  route_to_piecewise_polynomial route;
-
-  double maximum_required_road_length = 8.0 * max_forward_speed;
-
-  if( maximum_required_road_length < min_distance_in_route )
-  {
-    return route;
-  }
-
-  if( latest_route.center_lane.empty() )
-  {
-    return route;
-  }
-
-  double state_s = latest_route.get_s( current_state );
-
-  route_to_follow.s.clear();
-  route_to_follow.x.clear();
-  route_to_follow.y.clear();
-  route_to_follow.psi.clear();
-
-  std::vector<double> w;
-
-  double previous_s = 0.0;
-  for( const auto& [s, point] : latest_route.center_lane )
-  {
-    if( s < state_s )
-      continue;
-    if( s - state_s > maximum_required_road_length )
-      break;
-    double local_progress = s - state_s;
-    if( local_progress - previous_s > 0.02 ) // adding points every 2 cm
-    {
-      route_to_follow.s.push_back( local_progress );
-      route_to_follow.x.push_back( point.x );
-      route_to_follow.y.push_back( point.y );
-      w.push_back( 1.0 );
-      previous_s = local_progress;
-    }
-  }
-
-  if( route_to_follow.s.size() < 3 ) // safety check for route
-  {
-    return route;
-  }
-  route_to_follow.s[0] = 0.0; // overwriting the first element to 0 (start from ego vehicle)
-  route.x              = pp_route.CubicSplineSmoother( route_to_follow.s, route_to_follow.x, w, position_smoothing_factor );
-  route.y              = pp_route.CubicSplineSmoother( route_to_follow.s, route_to_follow.y, w, position_smoothing_factor );
-
-  std::vector<double> x, dx;
-  std::vector<double> y, dy;
-  pp_route.CubicSplineEvaluation( x, dx, route_to_follow.s, route.x );
-  pp_route.CubicSplineEvaluation( y, dy, route_to_follow.s, route.y );
-  for( size_t i = 0; route_to_follow.s.size() > 0 && i < route_to_follow.s.size() - 1; i++ )
-  {
-    if( dx[i] == 0.0 || dx.size() < 1 || dy.size() < 1 )
-    {
-      return route;
-    }
-    route_to_follow.psi.push_back( std::atan2( dy[i], dx[i] ) );
-  }
-  route_to_follow.psi[route_to_follow.s.size() - 1] = route_to_follow.psi[route_to_follow.s.size() - 2];
-  route.heading = pp_route.CubicSplineSmoother( route_to_follow.s, route_to_follow.psi, w, heading_smoothing_factor );
-
-  // Calculate time taken
-  auto                          end_time        = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> elapsed_seconds = end_time - start_time;
-  std::cerr << "time for route processing: " << elapsed_seconds.count() << std::endl;
-
-  return route;
-}
-
 prediction_to_piecewise_polynomial
 OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dynamics::TrafficParticipantSet& traffic_participants,
                                                                       const dynamics::VehicleStateDynamic& current_state )
@@ -433,7 +317,6 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
   auto start_time = std::chrono::high_resolution_clock::now();
   prediction_to_piecewise_polynomial ego_prediction;
   dynamics::TrafficParticipant ego_vehicle;
-  // std::cerr << "debug planner: " << traffic_participants.participants.at(0).id << std::endl;
   auto it = traffic_participants.participants.find( 777 );
   if ( it != traffic_participants.participants.end() ) 
   {
@@ -473,7 +356,7 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
         ( ego_vehicle.trajectory.value().states[i].x - ego_vehicle.trajectory.value().states[i-1].x ) +
         ( ego_vehicle.trajectory.value().states[i].y - ego_vehicle.trajectory.value().states[i-1].y ) * 
         ( ego_vehicle.trajectory.value().states[i].y - ego_vehicle.trajectory.value().states[i-1].y )
-      ) + 1e-3;
+      ) + 1e-4;
       trajectory_to_follow.s.push_back( progress[i] );
     }
   }
@@ -493,179 +376,6 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
   std::cerr << "time for prediction processing: " << elapsed_seconds.count() << std::endl;
 
   return ego_prediction;
-}
-
-std::vector<double>
-OptiNLCTrajectoryPlanner::compute_curvatures( const dynamics::VehicleStateDynamic& current_state )
-{
-  int n          = pp_route.findIndex( lookahead_time * current_state.vx, route_x );
-  n              = std::max( n, safe_index );
-  std::vector<double> curvatures( n, 0.0 );
-
-  // Compute curvature using a larger window size for robustness against noise
-  if( route_to_follow.s.size() > n )
-  {
-    for( size_t i = 2; i < n - 2; ++i ) // Adjust the window size here
-    {
-      // Average positions in a larger window to reduce noise sensitivity
-      double x1 = ( route_to_follow.x[i - 2] + route_to_follow.x[i - 1] ) / 2.0;
-      double y1 = ( route_to_follow.y[i - 2] + route_to_follow.y[i - 1] ) / 2.0;
-      double x2 = route_to_follow.x[i];
-      double y2 = route_to_follow.y[i];
-      double x3 = ( route_to_follow.x[i + 1] + route_to_follow.x[i + 2] ) / 2.0;
-      double y3 = ( route_to_follow.y[i + 1] + route_to_follow.y[i + 2] ) / 2.0;
-
-      double kappa  = adore::math::compute_curvature( x1, y1, x2, y2, x3, y3 );
-      curvatures[i] = std::abs( kappa );
-    }
-  }
-
-  // Handle boundary points by copying neighboring values
-  if( n > 4 )
-  {
-    curvatures[0]     = curvatures[2];
-    curvatures[1]     = curvatures[2];
-    curvatures[n - 1] = curvatures[n - 3];
-    curvatures[n - 2] = curvatures[n - 3];
-  }
-  else
-  {
-    curvatures[0] = 0.0;
-    if( n > 1 )
-      curvatures[1] = 0.0;
-  }
-
-  // Apply a simple moving average filter to smooth the computed curvatures
-  std::vector<double> smoothed_curvatures( n, 0.0 );
-  const int           smoothing_window = 3; // Adjust window size for desired smoothing level
-  for( size_t i = 0; i < n; ++i )
-  {
-    double sum   = 0.0;
-    int    count = 0;
-    for( int j = -smoothing_window; j <= smoothing_window; ++j )
-    {
-      int index = i + j;
-      if( index >= 0 && static_cast<size_t>( index ) < n )
-      {
-        sum += curvatures[index];
-        ++count;
-      }
-    }
-    smoothed_curvatures[i] = sum / count;
-  }
-
-  return smoothed_curvatures;
-}
-
-void
-OptiNLCTrajectoryPlanner::setup_reference_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
-                                                    const map::Map&                        latest_map,
-                                                    const dynamics::TrafficParticipantSet& traffic_participants )
-{
-  reference_velocity = maximum_velocity;
-  int index          = pp_route.findIndex( lookahead_time * current_state.vx, route_x );
-  index              = std::max( index, safe_index );
-
-  // Curvature calculation
-  std::vector<double> curvature;
-  if( route_to_follow.s.size() > index + 2 )
-  {
-    curvature = compute_curvatures( current_state );
-    distance_moved += current_state.vx * dt;
-    if( distance_moved > distance_to_add_behind )
-    {
-      curvature_behind.push_back( curvature[0] );
-      distance_to_add_behind += 1;
-    }
-
-    if( curvature_behind.size() > look_behind_for_curvature )
-    {
-      curvature_behind.erase( curvature_behind.begin() );
-    }
-    std::vector<double> total_curvature = curvature_behind;
-
-    total_curvature.insert( total_curvature.end(), curvature.begin(), curvature.end() );
-    double max_curvature      = *std::max_element( total_curvature.begin(), total_curvature.end() );
-    double curvature_velocity = std::max( sqrt( lateral_acceleration / max_curvature ), minimum_velocity_in_curve );
-    curvature_velocity = std::min( curvature_velocity, maximum_velocity );
-    std::cerr << "curvature velocity before: " << curvature_velocity << std::endl;
-    double a = ( curvature_velocity - current_state.vx ) / 5.0;
-    curvature_acc = std::max( a, -2.0 );
-    std::cerr << "curvature acc: " << curvature_acc << std::endl;
-    curvature_velocity = std::max( current_state.vx + a, minimum_velocity_in_curve );
-    std::cerr << "curvature velocity after: " << curvature_velocity << std::endl;
-    reference_velocity        = std::min( reference_velocity, curvature_velocity );
-  }
-
-  double idm_velocity = calculate_idm_velocity( latest_route, current_state, latest_map, traffic_participants );
-  reference_velocity  = std::min( reference_velocity, idm_velocity );
-
-  double min_dist = std::numeric_limits<double>::max();
-  auto   nearest  = latest_map.quadtree.get_nearest_point( current_state, min_dist );
-
-  if( nearest )
-  {
-    double current_route_point_max_speed = latest_map.get_lane_speed_limit( nearest.value().parent_id );
-    reference_velocity                   = std::min( reference_velocity, current_route_point_max_speed );
-  }
-  std::cerr << "reference velocity: " << reference_velocity << std::endl;
-}
-
-double
-OptiNLCTrajectoryPlanner::calculate_idm_velocity( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
-                                                  const map::Map& latest_map, const dynamics::TrafficParticipantSet& traffic_participants )
-{
-  double distance_to_object_min     = std::numeric_limits<double>::max();
-  double distance_to_maintain_ahead = min_distance_to_vehicle_ahead + wheelbase / 2;
-  double idm_velocity               = maximum_velocity;
-  double state_s                    = latest_route.get_s( current_state );
-
-
-  for( const auto& [id, participant] : traffic_participants.participants )
-  {
-    math::Point2d object_position;
-    object_position.x          = participant.state.x;
-    object_position.y          = participant.state.y;
-    double distance_to_object  = latest_route.get_s( object_position );
-    double offset              = math::distance_2d( object_position, latest_route.get_pose_at_s( distance_to_object ) );
-    auto   map_point           = latest_route.get_map_point_at_s( distance_to_object );
-
-
-    if (latest_map.lanes.count(map_point.parent_id) != 0)
-    {
-      bool   within_lane         = offset < latest_map.lanes.at( map_point.parent_id )->get_width( map_point.s );
-      distance_to_object        -= state_s;
-
-      if( within_lane && distance_to_object < distance_to_object_min && distance_to_object > 0 )
-      {
-        front_vehicle_velocity = participant.state.vx;
-        distance_to_object_min = distance_to_object;
-      }
-    }
-  }
-
-  std::cerr << "Distance to nearest object: " << distance_to_object_min << std::endl;
-  distance_to_goal = latest_route.get_length() - state_s;
-  std::cerr << "Distance to goal: " << distance_to_goal << std::endl;
-
-  double distance_for_idm = std::min( distance_to_object_min, distance_to_goal );
-
-  if( distance_to_goal < distance_to_object_min )
-  {
-    distance_to_maintain_ahead = 5.0;
-  }
-
-  double s_star = distance_to_maintain_ahead + current_state.vx * desired_time_headway
-                + current_state.vx * ( current_state.vx - front_vehicle_velocity ) / ( 2 * sqrt( max_acceleration * max_deceleration ) );
-  double velocity_ratio = current_state.vx / maximum_velocity;
-  idm_velocity          = current_state.vx
-               + max_acceleration
-                   * ( 1 - velocity_ratio * velocity_ratio * velocity_ratio * velocity_ratio
-                       - ( s_star / distance_for_idm ) * ( s_star / distance_for_idm ) );
-
-  idm_velocity = std::max( 0.0, std::min( idm_velocity, max_forward_speed ) ); // clamping idm velocity from 0 to max speed allowed
-
-  return idm_velocity;
 }
 
 } // namespace planner

@@ -90,8 +90,6 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
         auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i );
         if ( current_ego_map_point.max_speed.has_value() )
         {
-          double max_speed_at_point = current_ego_map_point.max_speed.value();
-          // max_speed = std::min( max_speed, max_speed_at_point );
           if ( current_ego_map_point.max_speed.value() == 0 )
           {
             ego_goal_distance = participant.route->get_s( current_ego_map_point ) - current_ego_s;
@@ -194,6 +192,11 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
     goal_dist = std::min( goal_dist, ego_goal_distance );
   }else{
     max_speed = participant.state.vx + 1e-4;
+  }
+
+  if ( participant.v2x_id.has_value() )
+  {
+    max_speed = max_allowed_speed;
   }
   
   // 3. Compute the “desired velocity” from IDM logic
