@@ -12,6 +12,8 @@
  *    Sanath Himasekhar Konthala
  ********************************************************************************/
 #include "planning/optinlc_trajectory_optimizer.hpp"
+#include <stdexcept>
+#include <iostream>
 
 namespace adore
 {
@@ -51,14 +53,11 @@ OptiNLCTrajectoryOptimizer::setup_constraints(
   OptiNLC_OCP<double, OptiNLCTrajectoryOptimizer::input_size, OptiNLCTrajectoryOptimizer::state_size, 0,
               OptiNLCTrajectoryOptimizer::control_points>& ocp )
 {
-
-  // Define a simple input update method
   ocp.setInputUpdate( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& input, double, void* ) {
     VECTOR<double, input_size> update_input = { input[DELTA], input[ACC] };
     return update_input;
   } );
 
-  // State Constraints
   ocp.setUpdateStateLowerBounds( [&]( const VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, OptiNLCTrajectoryOptimizer::state_size> state_constraints;
     state_constraints.setConstant( -std::numeric_limits<double>::infinity() );
@@ -71,7 +70,6 @@ OptiNLCTrajectoryOptimizer::setup_constraints(
     return state_constraints;
   } );
 
-  // Input Constraints
   ocp.setUpdateInputLowerBounds( [&]( const VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, input_size> input_constraints;
     input_constraints[0] = -limits.max_steering_angle;
@@ -86,7 +84,6 @@ OptiNLCTrajectoryOptimizer::setup_constraints(
     return input_constraints;
   } );
 
-  // Define a functions constraints method
   ocp.setUpdateFunctionConstraints( [&]( const VECTOR<double, state_size>&, const VECTOR<double, input_size>& ) {
     VECTOR<double, constraints_size> functions_constraint;
     functions_constraint.setConstant( 0.0 );
@@ -113,58 +110,77 @@ OptiNLCTrajectoryOptimizer::setup_objective_function(
 {
   ocp.setObjectiveFunction(
     [&]( const VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>& state, const VECTOR<double, input_size>&, double ) {
-      return state[L]; // Minimize the cost function `L`
+      return state[L];
     } );
 }
 
-// Public method to get the next vehicle command based onOptiNLCTrajectoryOptimizer::::Trajectory
 dynamics::Trajectory
 OptiNLCTrajectoryOptimizer::plan_trajectory( const dynamics::Trajectory&          reference_trajectory,
                                              const dynamics::VehicleStateDynamic& current_state )
 {
+  // Validate reference trajectory
+  if( reference_trajectory.states.empty() )
+  {
+    throw std::invalid_argument( "Reference trajectory is empty" );
+  }
+
+  // Check if trajectory covers the required time horizon
+  double trajectory_duration = reference_trajectory.states.back().time - reference_trajectory.states.front().time;
+  double required_duration = sim_time;
+  
+  if( trajectory_duration < required_duration )
+  {
+    std::cerr << "Warning: Reference trajectory duration (" << trajectory_duration 
+              << "s) is shorter than required optimization horizon (" << required_duration << "s)" << std::endl;
+  }
+
   auto start_time = std::chrono::high_resolution_clock::now();
 
-  // Initial state and input
   VECTOR<double, OptiNLCTrajectoryOptimizer::input_size> initial_input = { current_state.steering_angle, 0.25 };
   VECTOR<double, OptiNLCTrajectoryOptimizer::state_size> initial_state = { current_state.x, current_state.y, current_state.yaw_angle,
                                                                            current_state.vx, 0.0 };
 
-  // Create an MPC problem (OCP)
   OptiNLC_OCP<double, OptiNLCTrajectoryOptimizer::input_size, OptiNLCTrajectoryOptimizer::state_size, 0,
               OptiNLCTrajectoryOptimizer::control_points>
     ocp( &options );
 
-  // Set up dynamic model, objective, and constraints
-  setup_dynamic_model( ocp, reference_trajectory );
-
-  setup_objective_function( ocp );
-
-  setup_constraints( ocp );
-
-  // Solve the MPC problem
-  OptiNLC_Solver<double, input_size, state_size, 0, control_points> solver( ocp );
-
-  solver.solve( current_state.time, initial_state, initial_input );
-
-  auto opt_x = solver.get_optimal_states();
-
-  dynamics::Trajectory planned_trajectory;
-  for( int i = 0; i < control_points; i++ )
+  try
   {
-    dynamics::VehicleStateDynamic state;
-    state.x         = opt_x[i * state_size + X];
-    state.y         = opt_x[i * state_size + Y];
-    state.yaw_angle = opt_x[i * state_size + PSI];
-    state.vx        = opt_x[i * state_size + V];
-    state.time      = current_state.time + i * options.timeStep;
-    planned_trajectory.states.push_back( state );
+    setup_dynamic_model( ocp, reference_trajectory );
+    setup_objective_function( ocp );
+    setup_constraints( ocp );
+
+    OptiNLC_Solver<double, input_size, state_size, 0, control_points> solver( ocp );
+    solver.solve( current_state.time, initial_state, initial_input );
+
+    auto opt_x = solver.get_optimal_states();
+
+    dynamics::Trajectory planned_trajectory;
+    for( int i = 0; i < control_points; i++ )
+    {
+      dynamics::VehicleStateDynamic state;
+      state.x         = opt_x[i * state_size + X];
+      state.y         = opt_x[i * state_size + Y];
+      state.yaw_angle = opt_x[i * state_size + PSI];
+      state.vx        = opt_x[i * state_size + V];
+      state.time      = current_state.time + i * options.timeStep;
+      planned_trajectory.states.push_back( state );
+    }
+
+    auto                          end_time        = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end_time - start_time;
+
+    return planned_trajectory;
   }
-
-  // Calculate time taken
-  auto                          end_time        = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> elapsed_seconds = end_time - start_time;
-
-  return planned_trajectory;
+  catch( const std::exception& e )
+  {
+    std::cerr << "Exception in trajectory optimization: " << e.what() << std::endl;
+    
+    // Return a fallback trajectory with just the current state
+    dynamics::Trajectory fallback_trajectory;
+    fallback_trajectory.states.push_back( current_state );
+    return fallback_trajectory;
+  }
 }
 
 void
@@ -173,19 +189,46 @@ OptiNLCTrajectoryOptimizer::setup_dynamic_model(
               OptiNLCTrajectoryOptimizer::control_points>& ocp,
   const dynamics::Trajectory&                              trajectory )
 {
-  ocp.setDynamicModel( [&]( const VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>& state,
+  // Store trajectory bounds for safe access
+  double trajectory_start_time = trajectory.states.front().time;
+  double trajectory_end_time = trajectory.states.back().time;
+  
+  ocp.setDynamicModel( [&, trajectory_start_time, trajectory_end_time]( 
+                            const VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>& state,
                             const VECTOR<double, OptiNLCTrajectoryOptimizer::input_size>& input,
-                            VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>& derivative, double current_time, void* ) {
-    const double wheelbase = 2.69; // wheelbase, can be tuned based on your vehicle
+                            VECTOR<double, OptiNLCTrajectoryOptimizer::state_size>& derivative, 
+                            double current_time, void* ) {
+    const double wheelbase = 2.69;
 
-    // Dynamic model equations
-    derivative[X]   = state[V] * cos( state[PSI] );               // X derivative (velocity * cos(psi))
-    derivative[Y]   = state[V] * sin( state[PSI] );               // Y derivative (velocity * sin(psi))
-    derivative[PSI] = state[V] * tan( input[DELTA] ) / wheelbase; // PSI derivative (steering angle / wheelbase)
-    derivative[V]   = input[ACC];                                 // Velocity derivative (acceleration)
+    derivative[X]   = state[V] * cos( state[PSI] );
+    derivative[Y]   = state[V] * sin( state[PSI] );
+    derivative[PSI] = state[V] * tan( input[DELTA] ) / wheelbase;
+    derivative[V]   = input[ACC];
 
-    // Reference trajectory point at current time
-    auto reference_point = trajectory.get_state_at_time( current_time );
+    // Safe trajectory access with bounds checking
+    dynamics::VehicleStateDynamic reference_point;
+    
+    try
+    {
+      // Clamp current_time to valid trajectory range
+      double clamped_time = std::max( trajectory_start_time, std::min( current_time, trajectory_end_time ) );
+      reference_point = trajectory.get_state_at_time( clamped_time );
+    }
+    catch( const std::exception& e )
+    {
+      // Fallback: use the closest available state
+      if( current_time <= trajectory_start_time )
+      {
+        reference_point = trajectory.states.front();
+      }
+      else
+      {
+        reference_point = trajectory.states.back();
+      }
+      
+      std::cerr << "Warning: Failed to get reference state at time " << current_time 
+                << ", using fallback. Error: " << e.what() << std::endl;
+    }
 
     // Position error terms
     double dx = state[X] - reference_point.x;
@@ -202,17 +245,13 @@ OptiNLCTrajectoryOptimizer::setup_dynamic_model(
     double lateral_cost  = -dx * sin_yaw + dy * cos_yaw;
     lateral_cost        *= lateral_cost * lateral_weight;
 
-
     double velocity_cost = dv * dv * velocity_weight;
 
-    // Heading error term
     double heading_cost  = adore::math::normalize_angle( reference_point.yaw_angle - state[PSI] );
     heading_cost        *= heading_cost * heading_weight;
 
-    // Steering input cost
     double steering_cost = input[DELTA] * input[DELTA] * steering_weight;
 
-    // Total cost derivative
     derivative[L] = longitudinal_cost + lateral_cost + heading_cost + steering_cost + velocity_cost;
   } );
 }
