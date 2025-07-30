@@ -68,10 +68,7 @@ public:
   double min_distance = 8.0;
   double time_headway = 3.0;
 
-  // 0 for driving
-  // 1 for stopping at participant
-  // 2 for stopping at goal
-  // 3 for stopping at traffic light
+  std::unordered_map<int, double> traffic_light_distances;
 
   dynamics::VehicleCommandLimits limits;
 

@@ -79,20 +79,22 @@ int
 MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set )
 {
   max_speed = max_allowed_speed;
-  double ego_goal_distance = std::numeric_limits<double>::max();
   for( auto& [id, participant] : traffic_participant_set.participants )
   {
-    if ( id == 777 )
+    double distance_to_traffic_light = std::numeric_limits<double>::max();
+    traffic_light_distances[id] = distance_to_traffic_light;
+    if ( id == 777 || participant.v2x_id.has_value() )
     {
       double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<120.0; i++ )
+      for ( int i=0; i<200.0; i++ )
       {
-        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i );
+        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/2 );
         if ( current_ego_map_point.max_speed.has_value() )
         {
           if ( current_ego_map_point.max_speed.value() == 0 )
           {
-            ego_goal_distance = participant.route->get_s( current_ego_map_point ) - current_ego_s;
+            distance_to_traffic_light = participant.route->get_s( current_ego_map_point ) - current_ego_s;
+            traffic_light_distances[id] = distance_to_traffic_light;
             break;
           }
         }
@@ -130,11 +132,18 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
 
       if( participant.route && !participant.route->center_lane.empty() )
       {
-        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id, ego_goal_distance, overview_status);
+        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id, traffic_light_distances[id], overview_status);
       }
 
       next_state = dynamics::integrate_euler( current_state, vehicle_command, dt, motion_models[id] );
 
+      if ( traffic_participant_set.validity_area.has_value() )
+      {
+        if ( !traffic_participant_set.validity_area.value().point_inside(next_state))
+        {
+          continue;
+        }
+      }
       next_state.ax             = vehicle_command.acceleration;
       next_state.steering_angle = vehicle_command.steering_angle;
 
@@ -174,7 +183,7 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   // 2. Calculate the nearest obstacle distance & offset
   auto [closest_obstacle_distance, obstacle_speed, offset] = compute_distance_speed_offset_nearest_obstacle( traffic_participant_set, id );
   
-  if ( id == 777 )
+  if ( id == 777 || participant.v2x_id.has_value() )
   {
     if ( ego_goal_distance < goal_dist && ego_goal_distance < 20 )
     {
@@ -192,11 +201,6 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
     goal_dist = std::min( goal_dist, ego_goal_distance );
   }else{
     max_speed = participant.state.vx + 1e-4;
-  }
-
-  if ( participant.v2x_id.has_value() )
-  {
-    max_speed = max_allowed_speed;
   }
   
   // 3. Compute the “desired velocity” from IDM logic
@@ -288,7 +292,7 @@ MultiAgentPID::compute_idm_velocity( double obstacle_distance, double goal_dista
   // double effective_min_distance = ( goal_distance < obstacle_distance ) ? 3.0 : min_distance;
   // double effective_min_distance = - min_distance / ( 1 + std::exp( -0.5 * difference ) ) + min_distance;
   double effective_min_distance = min_distance;
-  if( goal_distance < obstacle_distance && obstacle_distance > 10.0 )
+  if( goal_distance < obstacle_distance && obstacle_distance > 15.0 )
   {
     effective_min_distance = 0.0;
   }
