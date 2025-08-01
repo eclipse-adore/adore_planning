@@ -86,9 +86,9 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
     if ( id == 777 || participant.v2x_id.has_value() )
     {
       double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<200.0; i++ )
+      for ( int i=0; i<1000.0; i++ )
       {
-        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/2 );
+        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/10 );
         if ( current_ego_map_point.max_speed.has_value() )
         {
           if ( current_ego_map_point.max_speed.value() == 0 )
