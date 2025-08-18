@@ -202,12 +202,12 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     valid_count++;
   }
   double projection = max_offset;
-  std::cerr << "projection: " << projection << std::endl;
-  if ( projection > 1 && bad_condition == false )
-  {
-    bad_condition = true;
-    bad_counter   += 1;
-  }
+  // std::cerr << "projection: " << projection << std::endl;
+  // if ( projection > 1 && bad_condition == false )
+  // {
+  //   bad_condition = true;
+  //   bad_counter   += 1;
+  // }
 
   dynamics::Trajectory planned_trajectory;
   for( size_t i = 0; i < control_points; i++ )
@@ -373,7 +373,6 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
   // Calculate time taken
   auto                          end_time        = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed_seconds = end_time - start_time;
-  std::cerr << "time for prediction processing: " << elapsed_seconds.count() << std::endl;
 
   return ego_prediction;
 }

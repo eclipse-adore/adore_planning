@@ -117,7 +117,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
   }
 
   int overview_status = 0;
-  for( int i = 0; i < number_of_integration_steps - 1; ++i )
+  for( int i = 0; i < number_of_integration_steps; ++i )
   {
     for( auto& [id, participant] : traffic_participant_set.participants )
     {
@@ -125,8 +125,8 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
         participant.physical_parameters.wheelbase = 0.5;
       dynamics::VehicleStateDynamic next_state;
       dynamics::VehicleStateDynamic current_state = get_current_state( participant );
-      if ( i == 0)
-        participant.trajectory->states.push_back( current_state );
+      // if ( i == 0)
+      //   participant.trajectory->states.push_back( current_state );
 
       dynamics::VehicleCommand vehicle_command = dynamics::VehicleCommand( 0.0, 0.0 );
 
