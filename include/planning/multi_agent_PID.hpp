@@ -65,7 +65,7 @@ public:
   double k_lateral_acc                       = 3.5;
 
   double lane_width   = 4.0;
-  double min_distance = 8.0;
+  double min_distance = 6.0;
   double time_headway = 3.0;
 
   std::unordered_map<int, double> traffic_light_distances;

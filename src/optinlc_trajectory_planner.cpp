@@ -174,40 +174,75 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
 
   double max_offset = 0.0;
   int valid_count = 0;
-
-  for ( size_t i = 1; i < control_points; i++ )
-  {
-    // Tangent vector of line 1
-    double dx = opt_x[i * state_size + X] - opt_x[(i-1) * state_size + X];
-    double dy = opt_x[i * state_size + Y] - opt_x[(i-1) * state_size + Y];
-    double norm = std::hypot(dx, dy);
-
-    if ( norm == 0.0 )
-      continue;
-
-    // Unit tangent and normal vectors
-    double tx = dx / norm;
-    double ty = dy / norm;
-    double nx = -ty;
-    double ny = tx;
-
-    // Vector from line1 to line2 at point i
-    double delta_x = trajectory_to_follow.x[(i-1) * 2] - opt_x[i * state_size + X];
-    double delta_y = trajectory_to_follow.y[(i-1) * 2] - opt_x[i * state_size + Y];
-
-    // Project delta onto normal direction
-    double lateral_offset = delta_x * nx + delta_y * ny;
-    if ( std::abs( lateral_offset ) > max_offset )
-      max_offset = std::abs(lateral_offset);
-    valid_count++;
-  }
   double projection = max_offset;
-  // std::cerr << "projection: " << projection << std::endl;
-  // if ( projection > 1 && bad_condition == false )
-  // {
-  //   bad_condition = true;
-  //   bad_counter   += 1;
-  // }
+  if( trajectory_to_follow.x.size() < 100 )
+  {
+    for ( size_t i = 1; i < 6; i++ )
+    {
+      // Tangent vector of line 1
+      double dx = trajectory_to_follow.x[i] - trajectory_to_follow.x[i-1];
+      double dy = trajectory_to_follow.y[i] - trajectory_to_follow.y[i-1];
+      double norm = std::hypot(dx, dy);
+
+      if ( norm == 0.0 )
+        continue;
+
+      // Unit tangent and normal vectors
+      double tx = dx / norm;
+      double ty = dy / norm;
+      double nx = -ty;
+      double ny = tx;
+
+      // Vector from line1 to line2 at point i
+      double delta_x = opt_x[(i-1) * 5 * state_size + X] - trajectory_to_follow.x[i];
+      double delta_y = opt_x[(i-1) * 5 * state_size + Y] - trajectory_to_follow.y[i];
+
+      // Project delta onto normal direction
+      double lateral_offset = delta_x * nx + delta_y * ny;
+      if ( std::abs( lateral_offset ) > max_offset )
+        max_offset = std::abs(lateral_offset);
+      valid_count++;
+    }
+    projection = max_offset;
+  }
+
+  if( trajectory_to_follow.x.size() > 100 )
+  {
+    for ( size_t i = 1; i < control_points; i++ )
+    {
+      // Tangent vector of line 1
+      double dx = opt_x[i * state_size + X] - opt_x[(i-1) * state_size + X];
+      double dy = opt_x[i * state_size + Y] - opt_x[(i-1) * state_size + Y];
+      double norm = std::hypot(dx, dy);
+
+      if ( norm == 0.0 )
+        continue;
+
+      // Unit tangent and normal vectors
+      double tx = dx / norm;
+      double ty = dy / norm;
+      double nx = -ty;
+      double ny = tx;
+
+      // Vector from line1 to line2 at point i
+      double delta_x = trajectory_to_follow.x[(i-1) * 2] - opt_x[i * state_size + X];
+      double delta_y = trajectory_to_follow.y[(i-1) * 2] - opt_x[i * state_size + Y];
+
+      // Project delta onto normal direction
+      double lateral_offset = delta_x * nx + delta_y * ny;
+      if ( std::abs( lateral_offset ) > max_offset )
+        max_offset = std::abs(lateral_offset);
+      valid_count++;
+    }
+    projection = max_offset;
+  }
+  
+  // std::cerr << "projection: " << projection << " size: " << trajectory_to_follow.x.size() << std::endl;
+  if ( projection > 1 && bad_condition == false )
+  {
+    bad_condition = true;
+    bad_counter   += 1;
+  }
 
   dynamics::Trajectory planned_trajectory;
   for( size_t i = 0; i < control_points; i++ )

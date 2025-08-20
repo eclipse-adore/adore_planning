@@ -81,25 +81,6 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
   max_speed = max_allowed_speed;
   for( auto& [id, participant] : traffic_participant_set.participants )
   {
-    double distance_to_traffic_light = std::numeric_limits<double>::max();
-    traffic_light_distances[id] = distance_to_traffic_light;
-    if ( id == 777 || participant.v2x_id.has_value() )
-    {
-      double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<1000.0; i++ )
-      {
-        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/10 );
-        if ( current_ego_map_point.max_speed.has_value() )
-        {
-          if ( current_ego_map_point.max_speed.value() == 0 )
-          {
-            distance_to_traffic_light = participant.route->get_s( current_ego_map_point ) - current_ego_s;
-            traffic_light_distances[id] = distance_to_traffic_light;
-            break;
-          }
-        }
-      }
-    }
     participant.trajectory = dynamics::Trajectory();
   }
   // Precompute motion model lambdas for each participant.
@@ -129,6 +110,25 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       //   participant.trajectory->states.push_back( current_state );
 
       dynamics::VehicleCommand vehicle_command = dynamics::VehicleCommand( 0.0, 0.0 );
+      double distance_to_traffic_light = std::numeric_limits<double>::max();
+      traffic_light_distances[id] = distance_to_traffic_light;
+      if ( id == 777 || participant.v2x_id.has_value() )
+      {
+        double current_ego_s = participant.route->get_s( current_state );
+        for ( double i=0; i<1000.0; i++ )
+        {
+          auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/10 );
+          if ( current_ego_map_point.max_speed.has_value() )
+          {
+            if ( current_ego_map_point.max_speed.value() == 0 )
+            {
+              distance_to_traffic_light = participant.route->get_s( current_ego_map_point ) - current_ego_s;
+              traffic_light_distances[id] = distance_to_traffic_light;
+              break;
+            }
+          }
+        }
+      }
 
       if( participant.route && !participant.route->center_lane.empty() )
       {
@@ -335,37 +335,42 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
 
     dynamics::VehicleStateDynamic object_state = get_current_state( other_participant );
     dynamics::VehicleStateDynamic future_object_state;
-    future_object_state.x = object_state.x + 2.0 * object_state.vx * cos( object_state.yaw_angle );
-    future_object_state.y = object_state.y + 2.0 * object_state.vx * sin( object_state.yaw_angle );
-    double                        object_s     = route.get_s( object_state );
-    double                        distance     = object_s - ref_current_s;
-
-    if( distance < 1.0 )
-      continue;
-
-    auto pose_at_distance = route.get_pose_at_s( object_s );
-
-    // Compute signed lateral offset (negative = left, positive = right)
-    double dx             = future_object_state.x - pose_at_distance.x;
-    double dy             = future_object_state.y - pose_at_distance.y;
-    double current_offset = -dx * std::sin( pose_at_distance.yaw ) + dy * std::cos( pose_at_distance.yaw );
-
-    if( std::abs( current_offset ) > 0.5 * lane_width )
-      continue;
+    double                        object_s;
+    double                        distance;
+    double                        current_offset;
+    for(int i=0; i<8; i++)
+    {
+      future_object_state.x = object_state.x + i * 0.5 * object_state.vx * cos( object_state.yaw_angle );
+      future_object_state.y = object_state.y + i * 0.5 * object_state.vx * sin( object_state.yaw_angle );
+      object_s     = route.get_s( future_object_state );
+      distance     = object_s - ref_current_s;
+      if( distance < 1.0 )
+        continue;
+  
+      auto pose_at_distance = route.get_pose_at_s( object_s );
+  
+      // Compute signed lateral offset (negative = left, positive = right)
+      double dx             = future_object_state.x - pose_at_distance.x;
+      double dy             = future_object_state.y - pose_at_distance.y;
+      current_offset = -dx * std::sin( pose_at_distance.yaw ) + dy * std::cos( pose_at_distance.yaw );
+  
+      if( std::abs( current_offset ) > 0.5 * lane_width )
+        continue;
+      
+      if( distance < closest_distance )
+      {
+        closest_distance      = distance;
+        obstacle_speed        = object_state.vx * cos( math::normalize_angle( object_state.yaw_angle - ref_participant.state.yaw_angle ) );
+        obstacle_speed = std::max( 0.0, obstacle_speed );
+        offset_closest_object = current_offset;
+      }
+    }
 
     // if( std::abs( current_offset ) > obstacle_avoidance_offset_threshold )
     // {
     //   offset_closest_object = current_offset;
     //   continue;
     // }
-
-    if( distance < closest_distance )
-    {
-      closest_distance      = distance;
-      obstacle_speed        = object_state.vx * cos( math::normalize_angle( object_state.yaw_angle - ref_participant.state.yaw_angle ) );
-      obstacle_speed = std::max( 0.0, obstacle_speed );
-      offset_closest_object = current_offset;
-    }
   }
 
   return { closest_distance, obstacle_speed, offset_closest_object };
