@@ -48,7 +48,7 @@ public:
   double       desired_acceleration        = 2.0;
   double       desired_deceleration        = 3.0;
   double       max_lateral_acceleration    = 0.5;
-  int          number_of_integration_steps = 160;
+  int          number_of_integration_steps = 120;
   double       dt                          = 0.05;
   const double min_point_distance          = 0.05;
   double       max_allowed_speed           = 10.0;
@@ -78,7 +78,7 @@ private:
   dynamics::VehicleStateDynamic   get_current_state( const dynamics::TrafficParticipant& participant );
   adore::dynamics::VehicleCommand compute_vehicle_command( const adore::dynamics::VehicleStateDynamic&   current_state,
                                                            const adore::dynamics::TrafficParticipantSet& traffic_participant_set,
-                                                           const int                                     id, const double& ego_goal_distance,
+                                                           const int                                     id, const double& traffic_light_distance,
                                                            int &overview_status );
 
   std::pair<double, double> compute_lane_following_errors( const dynamics::VehicleStateDynamic& current_state,
