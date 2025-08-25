@@ -112,7 +112,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
       dynamics::VehicleCommand vehicle_command = dynamics::VehicleCommand( 0.0, 0.0 );
       double distance_to_traffic_light = std::numeric_limits<double>::max();
       traffic_light_distances[id] = distance_to_traffic_light;
-      if ( id == 777 || participant.v2x_id.has_value() && ( participant.route && !participant.route->center_lane.empty() ) )
+      if ( ( id == 777 || participant.v2x_id.has_value() ) && ( participant.route && !participant.route->center_lane.empty() ) )
       {
         double current_ego_s = participant.route->get_s( current_state );
         for ( double i=0; i<100.0; i++ )
