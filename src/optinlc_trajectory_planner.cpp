@@ -358,6 +358,9 @@ OptiNLCTrajectoryPlanner::setup_optimizer_parameters_using_prediction( const dyn
     ego_vehicle = it->second;
   }
 
+  if( !ego_vehicle.trajectory.has_value() )
+    return ego_prediction;
+
   if( ego_vehicle.trajectory.value().states.empty() )
   {
     return ego_prediction;
