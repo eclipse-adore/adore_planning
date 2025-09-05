@@ -237,8 +237,8 @@ OptiNLCTrajectoryPlanner::plan_trajectory( const map::Route& latest_route, const
     projection = max_offset;
   }
   
-  // std::cerr << "projection: " << projection << " size: " << trajectory_to_follow.x.size() << std::endl;
-  if ( projection > 1 && bad_condition == false )
+  // std::cerr << "projection: " << projection << std::endl;
+  if ( projection > 0.75 && bad_condition == false )
   {
     bad_condition = true;
     bad_counter   += 1;
