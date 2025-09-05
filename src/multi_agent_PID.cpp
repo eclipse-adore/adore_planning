@@ -1,14 +1,16 @@
 /********************************************************************************
- * Copyright (c) 2025 Contributors to the Eclipse Foundation
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information regarding copyright ownership.
+ * Copyright (C) 2017-2025 German Aerospace Center (DLR).
+ * Eclipse ADORe, Automated Driving Open Research https://eclipse.org/adore
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
- * https://www.eclipse.org/legal/epl-2.0
+ * http://www.eclipse.org/legal/epl-2.0.
  *
  * SPDX-License-Identifier: EPL-2.0
+ *
+ * Contributors:
+ *    Giovanni Lucente
+ *    Marko Mizdrak
  ********************************************************************************/
 
 #include "planning/multi_agent_PID.hpp"
@@ -84,9 +86,9 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
     if ( id == 777 || participant.v2x_id.has_value() )
     {
       double current_ego_s  = participant.route->get_s( participant.state );
-      for ( int i=0; i<1000.0; i++ )
+      for ( int i=0; i<200.0; i++ )
       {
-        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/10 );
+        auto current_ego_map_point = participant.route->get_map_point_at_s( current_ego_s + i/2 );
         if ( current_ego_map_point.max_speed.has_value() )
         {
           if ( current_ego_map_point.max_speed.value() == 0 )
