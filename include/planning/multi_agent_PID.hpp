@@ -35,6 +35,12 @@ namespace planner
 {
 using MotionModel = std::function<dynamics::VehicleStateDynamic( const dynamics::VehicleStateDynamic&, const dynamics::VehicleCommand& )>;
 
+struct MultiAgendPIDReponse
+{
+  int overview_state;
+  double overview_obstacle_distance;
+};
+
 class MultiAgentPID
 {
 public:
@@ -42,7 +48,7 @@ public:
   MultiAgentPID();
 
   void set_parameters( const std::map<std::string, double>& params );
-  int plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set);
+  MultiAgendPIDReponse plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set);
 
 
   double       desired_acceleration        = 2.0;
@@ -65,7 +71,7 @@ public:
   double k_lateral_acc                       = 3.5;
 
   double lane_width   = 4.0;
-  double min_distance = 6.0;
+  double min_distance = 7.0;
   double time_headway = 3.0;
 
   std::unordered_map<int, double> traffic_light_distances;
@@ -79,7 +85,8 @@ private:
   adore::dynamics::VehicleCommand compute_vehicle_command( const adore::dynamics::VehicleStateDynamic&   current_state,
                                                            const adore::dynamics::TrafficParticipantSet& traffic_participant_set,
                                                            const int                                     id, const double& traffic_light_distance,
-                                                           int &overview_status );
+                                                           int &overview_status,
+                                                          double &overview_object_distance );
 
   std::pair<double, double> compute_lane_following_errors( const dynamics::VehicleStateDynamic& current_state,
                                                            const dynamics::TrafficParticipant&  participant );

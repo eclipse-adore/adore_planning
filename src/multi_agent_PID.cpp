@@ -75,7 +75,7 @@ MultiAgentPID::get_current_state( const dynamics::TrafficParticipant& participan
   return participant.state;
 }
 
-int
+MultiAgendPIDReponse
 MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_participant_set )
 {
   max_speed = max_allowed_speed;
@@ -98,6 +98,8 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
   }
 
   int overview_status = 0;
+  double overview_obstacle_distance = std::numeric_limits<double>::max();
+
   for( int i = 0; i < number_of_integration_steps; ++i )
   {
     for( auto& [id, participant] : traffic_participant_set.participants )
@@ -132,7 +134,7 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
 
       if( participant.route && !participant.route->center_lane.empty() )
       {
-        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id, traffic_light_distances[id], overview_status);
+        vehicle_command = compute_vehicle_command( current_state, traffic_participant_set, id, traffic_light_distances[id], overview_status, overview_obstacle_distance);
       }
 
       next_state = dynamics::integrate_euler( current_state, vehicle_command, dt, motion_models[id] );
@@ -151,12 +153,12 @@ MultiAgentPID::plan_trajectories( dynamics::TrafficParticipantSet& traffic_parti
     }
   }
 
-  return overview_status; 
+  return MultiAgendPIDReponse { overview_status, overview_obstacle_distance }; 
 }
 
 dynamics::VehicleCommand
 MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   current_state,
-                                        const dynamics::TrafficParticipantSet& traffic_participant_set, const int id, const double& traffic_light_distance, int &overview_status )
+                                        const dynamics::TrafficParticipantSet& traffic_participant_set, const int id, const double& traffic_light_distance, int &overview_status, double &overview_object_distance )
 {
   auto& participant = traffic_participant_set.participants.at( id );
 
@@ -185,6 +187,8 @@ MultiAgentPID::compute_vehicle_command( const dynamics::VehicleStateDynamic&   c
   
   if ( id == 777 || participant.v2x_id.has_value() )
   {
+    overview_object_distance = closest_obstacle_distance;
+
     if ( traffic_light_distance < goal_dist && traffic_light_distance < 20 )
     {
       overview_status = 3;
@@ -349,12 +353,16 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
     double                        object_s;
     double                        distance;
     double                        current_offset;
-    for(int i=1; i<7; i++)
+    double cos_object_yaw = cos(object_state.yaw_angle);
+    double sin_object_yaw = sin(object_state.yaw_angle);
+    for(int i=0; i<6; i++)
     {
-      future_object_state.x = object_state.x + i * 0.5 * object_state.vx * cos( object_state.yaw_angle );
-      future_object_state.y = object_state.y + i * 0.5 * object_state.vx * sin( object_state.yaw_angle );
+      future_object_state.x = object_state.x + i * 0.5 * object_state.vx * cos_object_yaw;
+      future_object_state.y = object_state.y + i * 0.5 * object_state.vx * sin_object_yaw;
       object_s     = route.get_s( future_object_state );
-      distance     = object_s - ref_current_s;
+      distance     = object_s - ref_current_s - 0.5 * std::max({other_participant.physical_parameters.body_height,
+                                                          other_participant.physical_parameters.body_width,
+                                                          other_participant.physical_parameters.body_length});
       if( distance < 1.0 || distance > 50.0 )
         continue;
   
@@ -371,6 +379,7 @@ MultiAgentPID::compute_distance_speed_offset_nearest_obstacle( const dynamics::T
       if( distance < closest_distance )
       {
         closest_distance      = distance;
+
         obstacle_speed        = object_state.vx; // * cos( math::normalize_angle( object_state.yaw_angle - ref_participant.state.yaw_angle ) );
         obstacle_speed = std::max( 0.0, obstacle_speed );
         offset_closest_object = current_offset;
