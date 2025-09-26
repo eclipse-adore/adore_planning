@@ -80,10 +80,10 @@ private:
   double wheelbase                 = 2.69;
   double max_forward_speed         = 13.6;
   double max_reverse_speed         = -2.0;
-  double max_steering_velocity     = 0.3;
+  double max_steering_velocity     = 0.5;
   double max_steering_acceleration = 0.5;
 
-  double                          reference_velocity = 3.0; // reference velocity of 3.0 m/s to start leaving the safety corridor
+  double                          reference_velocity = 1.75; // reference velocity of 3.0 m/s to start leaving the safety corridor
   double                          car_previous_x;
   double                          car_previous_y;
   double                          distance_moved  = 0.0;
@@ -94,7 +94,7 @@ private:
   int                               closest_index = -1;
   std::string                       relative_position;
   std::vector<adore::math::Point2d> border_to_plan;
-  double                            lateral_distance_from_border = 1.2;
+  double                            lateral_distance_from_border = 1.5;
 
   double               bad_counter   = 0;
   bool                 bad_condition = false;
