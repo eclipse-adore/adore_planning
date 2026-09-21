@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: EPL-2.0
  ********************************************************************************/
 
-// Stop / hold route and trajectory construction: emergency stop and hard-hold
-// fallback trajectories, zeroing route speeds from a given s, inserting a
-// zero-speed stop point, and building a route-based braking profile that stops
-// before an obstacle (delegating to the public RouteSpeedPolicy).
+// Stop-route construction: route-speed stop profiles, zeroing route speeds from
+// a given s, inserting a zero-speed stop point, and building a route-based
+// braking profile that stops before an obstacle.
 
 #include "obstacle_avoidance_internal.hpp"
 
@@ -26,19 +25,16 @@ namespace oa_detail
 double
 normalized_stop_before_obstacle( const ObstacleAvoidanceParams& params )
 {
-  if( params.stop_before_obstacle > params.front_clearance )
-  {
-    return params.stop_before_obstacle;
-  }
-
-  const double adjusted = params.front_clearance + params.stop_adjustment_offset;
-  // std::fprintf(
-    // stderr,
-    // "[OA][CONFIG] stop_before_obstacle must be greater than front_clearance; adjusted from %.2f to %.2f\n",
-    // params.stop_before_obstacle,
-    // adjusted );
-  // std::fflush( stderr );
-  return adjusted;
+  // PRE-SHIFT stop stand-off. Used when ego stops before the obstacle WITHOUT having
+  // begun a shift -- e.g. the neighbouring-lane use is not yet approved, so ego waits
+  // until a shift becomes possible. Ego must come to rest BEFORE the shift would
+  // start (obstacle_s_min - front_clearance) so a shift is still executable from
+  // standstill afterwards. Hence the stand-off is at least the shift entry ramp;
+  // a larger configured stop_before_obstacle is honoured. The DURING-avoidance
+  // stop deliberately reads stop_before_obstacle directly and may stop closer.
+  return std::max(
+    std::max( 0.0, params.stop_before_obstacle ),
+    std::max( 0.0, params.front_clearance ) );
 }
 
 // set_route_points_from_s_to_zero moved to the public API (defined in
@@ -73,7 +69,6 @@ build_stop_route_before_obstacle(
   const dynamics::VehicleStateDynamic& ego,
   const dynamics::PhysicalVehicleParameters& vehicle_params,
   double stop_before_obstacle,
-  double safety_margin,
   const ObstacleAvoidanceParams& params )
 {
   map::Route stop_route = route;
@@ -82,10 +77,6 @@ build_stop_route_before_obstacle(
 
   if( !std::isfinite( ego_s ) )
   {
-    // std::fprintf(
-      // stderr,
-      // "[OA] stop route: invalid ego_s\n" );
-    // std::fflush( stderr );
 
     return stop_route;
   }
@@ -101,67 +92,14 @@ build_stop_route_before_obstacle(
 
   if( !std::isfinite( stop_s ) )
   {
-    // std::fprintf(
-      // stderr,
-      // "[OA] stop route: invalid reference stop_s, object_s_min=%.2f stop_distance=%.2f front_offset=%.2f\n",
-      // obstacle.object_s_min,
-      // stop_before_obstacle,
-      // vehicle_params.wheelbase + vehicle_params.front_axle_to_front_border );
-    // std::fflush( stderr );
 
     return stop_route;
   }
 
-  /*
-   * acceleration_min is defined in the vehicle parameter file, e.g. NGC.json.
-   * It is expected to be negative, for example -1.5 m/s².
-   */
-  const double braking_deceleration =
-    std::max( params.min_braking_deceleration, std::fabs( vehicle_params.acceleration_min ) );
-
-  const double current_speed =
-    std::max( 0.0, ego.vx );
-
-  const double available_distance =
-    stop_s - ego_s;
-
-  const double required_braking_distance =
-    current_speed * current_speed / ( 2.0 * braking_deceleration );
-
-  /*
-   * If the desired stop point is already behind or at the ego reference point,
-   * command zero speed from the current ego position onward.
-   */
-  const double reachability_margin = std::max( 0.0, safety_margin );
-  const double close_stop_hold_margin =
-    std::max( 0.25, std::min( 1.0, std::max( 0.0, safety_margin ) ) );
-  const double hard_reachability_margin =
-    current_speed > 0.5
-      ? reachability_margin
-      : close_stop_hold_margin;
-
-  if( available_distance <= 0.0 ||
-      available_distance < required_braking_distance + hard_reachability_margin )
-  {
-    // std::fprintf(
-      // stderr,
-      // "[OA][STOP_ROUTE] requested stop unreachable; applying maximum route-based braking ego_s=%.2f reference_stop_s=%.2f front_stop_s=%.2f object_s_min=%.2f v=%.2f available=%.2f required=%.2f safety_margin=%.2f reachability_margin=%.2f\n",
-      // ego_s,
-      // stop_s,
-      // front_stop_s,
-      // obstacle.object_s_min,
-      // current_speed,
-      // available_distance,
-      // required_braking_distance,
-      // reachability_margin,
-      // hard_reachability_margin );
-    // std::fflush( stderr );
-    set_route_points_from_s_to_zero( stop_route, ego_s );
-
-    return stop_route;
-  }
-
-  return RouteSpeedPolicy::apply_stop_profile(
+  // Unified braking: the envelope itself decides between gentle (comfort) braking
+  // to stop_s and maximum braking (|acceleration_min|) when stop_s is too close,
+  // so no separate reachability check or zero-from-ego fallback is needed here.
+  return RouteSpeedPolicy::apply_brake_envelope(
     stop_route,
     ego_s,
     ego.vx,
