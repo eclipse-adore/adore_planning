@@ -5,8 +5,8 @@
  ********************************************************************************/
 
 // Projection of traffic-participant geometry onto the route reference line:
-// analytic obstacle envelopes, participant footprints and world-frame footprint
-// reconstruction. Depends only on the geometry primitives in oa_detail.
+// analytic obstacle envelopes and participant footprints. Depends only on the
+// geometry primitives in oa_detail.
 
 #include "obstacle_avoidance_internal.hpp"
 
@@ -46,52 +46,18 @@ contains_participant_id( const std::vector<int>& ids, int id )
   return std::find( ids.begin(), ids.end(), id ) != ids.end();
 }
 
-void
-fill_world_footprint_from_participant( RouteCorridorConflict& conflict,
-                                       const dynamics::TrafficParticipant& participant,
-                                       const ObstacleAvoidanceParams& params )
-{
-  conflict.object_center_x = participant.state.x;
-  conflict.object_center_y = participant.state.y;
-  conflict.object_yaw = participant.state.yaw_angle;
-  conflict.object_length =
-    std::max( params.min_vehicle_dimension, participant.physical_parameters.body_length );
-  conflict.object_width =
-    std::max( params.min_vehicle_dimension, participant.physical_parameters.body_width );
-
-  const double half_length = 0.5 * conflict.object_length;
-  const double half_width = 0.5 * conflict.object_width;
-  const double cos_yaw = std::cos( conflict.object_yaw );
-  const double sin_yaw = std::sin( conflict.object_yaw );
-
-  const std::array<std::pair<double, double>, 4> local_corners = {{
-    { -half_length, -half_width },
-    { -half_length,  half_width },
-    {  half_length,  half_width },
-    {  half_length, -half_width }
-  }};
-
-  for( std::size_t i = 0; i < local_corners.size(); ++i )
-  {
-    const auto& [local_x, local_y] = local_corners[i];
-    conflict.footprint_x[i] =
-      conflict.object_center_x + local_x * cos_yaw - local_y * sin_yaw;
-    conflict.footprint_y[i] =
-      conflict.object_center_y + local_x * sin_yaw + local_y * cos_yaw;
-  }
-
-  conflict.has_world_footprint = true;
-}
-
 bool
 project_obstacle_to_route_analytic( const map::Route& route,
                                     const dynamics::TrafficParticipant& participant,
                                     const ObstacleAvoidanceParams& params,
-                                    double ego_s,
                                     double ego_half_width,
                                     ObstacleEnvelope& envelope )
 {
   if( route.reference_line.size() < 2 )
+  {
+    return false;
+  }
+  if( !participant_has_valid_dimensions( participant ) )
   {
     return false;
   }
@@ -101,13 +67,6 @@ project_obstacle_to_route_analytic( const map::Route& route,
   envelope.object_l_min =  std::numeric_limits<double>::infinity();
   envelope.object_l_max = -std::numeric_limits<double>::infinity();
 
-  envelope.s_min =  std::numeric_limits<double>::infinity();
-  envelope.s_max = -std::numeric_limits<double>::infinity();
-  envelope.l_min =  std::numeric_limits<double>::infinity();
-  envelope.l_max = -std::numeric_limits<double>::infinity();
-
-  envelope.object_count = 1;
-
   const double center_x = participant.state.x;
   const double center_y = participant.state.y;
   const double yaw      = participant.state.yaw_angle;
@@ -116,10 +75,10 @@ project_obstacle_to_route_analytic( const map::Route& route,
   const double sin_yaw = std::sin( yaw );
 
   const double half_length =
-    0.5 * std::max( params.min_vehicle_dimension, participant.physical_parameters.body_length );
+    0.5 * participant.physical_parameters.body_length;
 
   const double half_width =
-    0.5 * std::max( params.min_vehicle_dimension, participant.physical_parameters.body_width );
+    0.5 * participant.physical_parameters.body_width;
 
   // Corners plus the midpoints of the long edges: on curved routes the side of
   // a long vehicle can reach closer to the reference line than either corner
@@ -134,7 +93,6 @@ project_obstacle_to_route_analytic( const map::Route& route,
   }};
 
   bool any_valid_projection = false;
-  double min_corner_distance = std::numeric_limits<double>::infinity();
 
   for( const auto& [local_x, local_y] : local_corners )
   {
@@ -150,9 +108,6 @@ project_obstacle_to_route_analytic( const map::Route& route,
     {
       continue;
     }
-
-    min_corner_distance =
-      std::min( min_corner_distance, projection->distance );
 
     any_valid_projection = true;
 
@@ -175,27 +130,10 @@ project_obstacle_to_route_analytic( const map::Route& route,
     return false;
   }
 
-  if( params.max_projection_distance_from_route > 0.0 && min_corner_distance > params.max_projection_distance_from_route )
-  {
-    return false;
-  }
-
   if( !std::isfinite( envelope.object_s_min ) ||
       !std::isfinite( envelope.object_s_max ) ||
       !std::isfinite( envelope.object_l_min ) ||
       !std::isfinite( envelope.object_l_max ) )
-  {
-    return false;
-  }
-
-  if( envelope.object_s_max < ego_s - params.rear_clearance )
-  {
-    return false;
-  }
-
-  if( std::max( std::fabs( envelope.object_l_min ),
-                std::fabs( envelope.object_l_max ) ) >
-      params.max_object_lateral_distance )
   {
     return false;
   }
@@ -209,28 +147,10 @@ project_obstacle_to_route_analytic( const map::Route& route,
 
   envelope.overlaps_ego_corridor = overlaps_ego_corridor;
 
-  envelope.s_min = envelope.object_s_min;
-  envelope.s_max = envelope.object_s_max;
-  envelope.l_min = envelope.object_l_min;
-  envelope.l_max = envelope.object_l_max;
-
-  envelope.center_s = 0.5 * ( envelope.s_min + envelope.s_max );
-  envelope.center_l = 0.5 * ( envelope.l_min + envelope.l_max );
+  envelope.center_s =
+    0.5 * ( envelope.object_s_min + envelope.object_s_max );
 
   return true;
-}
-
-void
-refresh_obstacle_envelope_derived_values( ObstacleEnvelope& envelope,
-                                          const ObstacleAvoidanceParams& )
-{
-  envelope.s_min = envelope.object_s_min;
-  envelope.s_max = envelope.object_s_max;
-  envelope.l_min = envelope.object_l_min;
-  envelope.l_max = envelope.object_l_max;
-
-  envelope.center_s = 0.5 * ( envelope.s_min + envelope.s_max );
-  envelope.center_l = 0.5 * ( envelope.l_min + envelope.l_max );
 }
 
 std::optional<ParticipantFootprintOnRoute>
@@ -243,6 +163,10 @@ project_participant_footprint_to_route(
   {
     return std::nullopt;
   }
+  if( !participant_has_valid_dimensions( participant ) )
+  {
+    return std::nullopt;
+  }
 
   const double center_x = participant.state.x;
   const double center_y = participant.state.y;
@@ -251,10 +175,10 @@ project_participant_footprint_to_route(
   const double cos_yaw = std::cos( yaw );
   const double sin_yaw = std::sin( yaw );
   const double half_length =
-    0.5 * std::max( params.min_vehicle_dimension, participant.physical_parameters.body_length );
+    0.5 * participant.physical_parameters.body_length;
 
   const double half_width =
-    0.5 * std::max( params.min_vehicle_dimension, participant.physical_parameters.body_width );
+    0.5 * participant.physical_parameters.body_width;
 
   // Corners plus long-edge midpoints; see project_obstacle_to_route_analytic
   // for the curved-route rationale.
@@ -296,12 +220,10 @@ project_participant_footprint_to_route(
   if( center_projection.has_value() )
   {
     footprint.center_s = center_projection->s;
-    footprint.center_l = center_projection->l;
   }
   else
   {
     footprint.center_s = 0.5 * ( footprint.s_min + footprint.s_max );
-    footprint.center_l = 0.5 * ( footprint.l_min + footprint.l_max );
   }
 
   if( !any_valid_projection ||
@@ -314,7 +236,6 @@ project_participant_footprint_to_route(
     return std::nullopt;
   }
 
-  footprint.valid = true;
   return footprint;
 }
 

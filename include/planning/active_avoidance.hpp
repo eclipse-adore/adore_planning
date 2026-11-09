@@ -8,7 +8,6 @@
 
 #include <limits>
 #include <optional>
-#include <string>
 
 #include <adore_map/route.hpp>
 
@@ -23,54 +22,17 @@ namespace adore
 namespace planner
 {
 
-// Operations on the obstacle-avoidance maneuver state and its ghost memory.
-// These are pure (no ROS) so the maneuver lifecycle can be unit-tested; the
-// decision-maker node owns the ActiveAvoidanceState instance and calls these.
+// Operations on the obstacle-avoidance maneuver state. These are pure (no ROS)
+// so the maneuver lifecycle can be unit-tested; the decision-maker node owns the
+// ActiveAvoidanceState instance and calls these.
 
-// Build a hold-able ghost envelope for an original avoidance obstacle by
-// projecting the participant footprint onto the route. Returns nullopt if no
-// footprint corner projects onto the route.
-std::optional<ObstacleGhostEnvelope>
-make_original_obstacle_envelope_from_participant(
-  const map::Route& route,
-  const dynamics::TrafficParticipant& participant,
-  double now,
-  const ObstacleAvoidanceParams& params );
-
-// Age, match, refresh and release the ghost memory against this cycle's
-// route-corridor safety result.
-void
-update_obstacle_ghost_memory(
-  ActiveAvoidanceState& state,
-  const RouteCorridorCheckResult& safety,
-  double ego_s,
-  double now,
-  const ObstacleAvoidanceParams& params );
-
-// Initialise the active maneuver state from a planned avoidance result and seed
-// the ghost memory from the original obstacles (optionally preserving the
-// existing ghost memory across a dynamic replan).
+// Initialise or refresh the persistent active maneuver state from a planned
+// avoidance result.
 void
 start_active_avoidance_state(
   ActiveAvoidanceState& state,
   const ObstacleAvoidanceResult& oa_result,
-  const map::Route& original_route,
-  const dynamics::TrafficParticipantSet& traffic_participants,
-  const dynamics::VehicleStateDynamic& ego,
-  const ObstacleAvoidanceParams& params,
-  bool preserve_existing_ghost_memory = false );
-
-// Most relevant (nearest, unpassed) ghosted conflict to stop for, or nullopt.
-std::optional<RouteCorridorConflict>
-most_relevant_ghost_conflict(
-  const ActiveAvoidanceState& state,
-  double ego_s );
-
-// An original avoidance obstacle that ego has not yet passed, or nullopt.
-std::optional<ObstacleGhostEnvelope>
-find_unpassed_original_ghost(
-  const ActiveAvoidanceState& state,
-  double ego_s );
+  const map::Route& mission_route_baseline );
 
 // Monotonic-progression plausibility for the ego projection onto the active
 // modified route. Enforces no-backward motion and rejects implausible forward
@@ -82,7 +44,8 @@ std::optional<double>
 compute_monotonic_ego_s_modified(
   double ego_s_modified_raw,
   const dynamics::VehicleStateDynamic& vehicle_state_dynamic,
-  ActiveAvoidanceState& state );
+  ActiveAvoidanceState& state,
+  const ObstacleAvoidanceParams& params = {} );
 
 // ----------------------------------------------------------------------------
 // Conflict assessment and stop geometry for a route ego is following.
@@ -97,7 +60,6 @@ struct RouteStopPlan
   double brake_start_s = std::numeric_limits<double>::quiet_NaN();
   double required_braking_distance = 0.0;
   double braking_deceleration = 0.0;
-  std::string reason;
 };
 
 // Build a RouteCorridorConflict from an active opposite-lane monitor result so
@@ -106,16 +68,14 @@ struct RouteStopPlan
 RouteCorridorConflict
 make_oncoming_monitor_conflict(
   const ObstacleAvoidanceMonitorResult& monitor_result,
-  double reference_s,
-  const char* ttc_source );
+  double reference_s );
 
-// True if a static/slow conflict keeps at least side_clearance to a route-
-// centered ego footprint, so ego can keep going without stopping.
+// Convert every unsafe active opposite-lane monitor result into a route stop.
+// Late perception after commitment is common and is therefore always safety
+// relevant rather than controlled by a runtime switch.
 bool
-static_or_slow_conflict_has_side_clearance(
-  const RouteCorridorConflict& conflict,
-  const dynamics::PhysicalVehicleParameters& vehicle_params,
-  const ObstacleAvoidanceParams& params );
+should_stop_for_oncoming_monitor_result(
+  const ObstacleAvoidanceMonitorResult& monitor_result );
 
 // Longitudinal braking geometry to stop before a conflict on the active route.
 RouteStopPlan

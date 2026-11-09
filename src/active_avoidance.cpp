@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstddef>
 #include <cstdio>
 #include <limits>
 #include <optional>
@@ -21,290 +20,15 @@ namespace adore
 {
 namespace planner
 {
-namespace
-{
-
-// Tolerance added on top of the odometry-based advance when judging whether a
-// new projection onto the active modified route is plausible. Covers projection
-// refinement noise between cycles.
-constexpr double MAX_PLAUSIBLE_MODIFIED_S_JUMP = 2.0;
-
-// extra_l_margin widens the lateral match band. Ghost envelopes can stem from
-// projections onto different reference lines (original vs. laterally shifted
-// modified route); their l values then differ by up to the lateral shift, so
-// matching must tolerate that offset.
-bool
-envelopes_overlap_with_margin(
-    const planner::ObstacleGhostEnvelope& a,
-    const planner::RouteCorridorConflict& b,
-    const planner::ObstacleAvoidanceParams& params,
-    double extra_l_margin = 0.0 )
-{
-    const double l_margin =
-        params.ghost_obstacle_match_l_margin + std::max( 0.0, extra_l_margin );
-    return a.object_s_max + params.ghost_obstacle_match_s_margin >= b.object_s_min &&
-           a.object_s_min - params.ghost_obstacle_match_s_margin <= b.object_s_max &&
-           a.object_l_max + l_margin >= b.object_l_min &&
-           a.object_l_min - l_margin <= b.object_l_max;
-}
-
-bool
-ghost_envelopes_overlap_with_margin(
-    const planner::ObstacleGhostEnvelope& a,
-    const planner::ObstacleGhostEnvelope& b,
-    const planner::ObstacleAvoidanceParams& params,
-    double extra_l_margin = 0.0 )
-{
-    const double l_margin =
-        params.ghost_obstacle_match_l_margin + std::max( 0.0, extra_l_margin );
-    return a.object_s_max + params.ghost_obstacle_match_s_margin >= b.object_s_min &&
-           a.object_s_min - params.ghost_obstacle_match_s_margin <= b.object_s_max &&
-           a.object_l_max + l_margin >= b.object_l_min &&
-           a.object_l_min - l_margin <= b.object_l_max;
-}
-
-planner::ObstacleGhostEnvelope
-make_ghost_envelope(
-    const planner::RouteCorridorConflict& conflict,
-    double now,
-    const planner::ObstacleAvoidanceParams& params,
-    bool created_from_active_route_conflict )
-{
-    planner::ObstacleGhostEnvelope envelope;
-    envelope.object_s_min = conflict.object_s_min;
-    envelope.object_s_max = conflict.object_s_max;
-    envelope.object_l_min = conflict.object_l_min;
-    envelope.object_l_max = conflict.object_l_max;
-    envelope.inflated_s_min = conflict.inflated_s_min;
-    envelope.inflated_s_max = conflict.inflated_s_max;
-    envelope.inflated_l_min = conflict.inflated_l_min;
-    envelope.inflated_l_max = conflict.inflated_l_max;
-    envelope.object_class = conflict.object_class;
-    envelope.first_seen_time = now;
-    envelope.last_seen_time = now;
-    envelope.seen_count = 1;
-    envelope.hold_until_s =
-        conflict.object_s_max +
-        std::max( 0.0, params.rear_clearance ) +
-        std::max( 0.0, params.ghost_obstacle_release_extra_s );
-    envelope.hold_until_passed =
-        conflict.object_class == planner::RouteCorridorObjectClass::StaticOrSlow;
-    envelope.created_from_active_route_conflict = created_from_active_route_conflict;
-    envelope.is_ghost = false;
-    envelope.last_participant_id = conflict.participant_id;
-    envelope.object_center_x = conflict.object_center_x;
-    envelope.object_center_y = conflict.object_center_y;
-    envelope.object_yaw = conflict.object_yaw;
-    envelope.object_length = conflict.object_length;
-    envelope.object_width = conflict.object_width;
-    envelope.footprint_x = conflict.footprint_x;
-    envelope.footprint_y = conflict.footprint_y;
-    envelope.has_world_footprint = conflict.has_world_footprint;
-    return envelope;
-}
-
-} // namespace
-
-std::optional<planner::ObstacleGhostEnvelope>
-make_original_obstacle_envelope_from_participant(
-    const map::Route& route,
-    const dynamics::TrafficParticipant& participant,
-    double now,
-    const planner::ObstacleAvoidanceParams& params )
-{
-    planner::RouteCorridorConflict conflict;
-    conflict.participant_id = participant.id;
-    conflict.object_class = planner::RouteCorridorObjectClass::StaticOrSlow;
-    conflict.object_center_x = participant.state.x;
-    conflict.object_center_y = participant.state.y;
-    conflict.object_yaw = participant.state.yaw_angle;
-    conflict.object_length =
-        std::max( params.min_vehicle_dimension, participant.physical_parameters.body_length );
-    conflict.object_width =
-        std::max( params.min_vehicle_dimension, participant.physical_parameters.body_width );
-    conflict.has_world_footprint = true;
-
-    const double half_length = 0.5 * conflict.object_length;
-    const double half_width = 0.5 * conflict.object_width;
-    const double cos_yaw = std::cos( conflict.object_yaw );
-    const double sin_yaw = std::sin( conflict.object_yaw );
-    const std::array<std::pair<double, double>, 4> local_corners = {{
-        { -half_length, -half_width },
-        { -half_length,  half_width },
-        {  half_length,  half_width },
-        {  half_length, -half_width }
-    }};
-
-    conflict.object_s_min = std::numeric_limits<double>::infinity();
-    conflict.object_s_max = -std::numeric_limits<double>::infinity();
-    conflict.object_l_min = std::numeric_limits<double>::infinity();
-    conflict.object_l_max = -std::numeric_limits<double>::infinity();
-
-    for( std::size_t i = 0; i < local_corners.size(); ++i )
-    {
-        const auto& [local_x, local_y] = local_corners[i];
-        const double x =
-            conflict.object_center_x + local_x * cos_yaw - local_y * sin_yaw;
-        const double y =
-            conflict.object_center_y + local_x * sin_yaw + local_y * cos_yaw;
-        conflict.footprint_x[i] = x;
-        conflict.footprint_y[i] = y;
-
-        dynamics::VehicleStateDynamic corner_state;
-        corner_state.x = x;
-        corner_state.y = y;
-        const double corner_s = route.get_s( corner_state );
-        if( !std::isfinite( corner_s ) )
-        {
-            continue;
-        }
-
-        const auto route_pose = route.get_pose_at_s( corner_s );
-        const double dx = x - route_pose.x;
-        const double dy = y - route_pose.y;
-        const double corner_l =
-            -dx * std::sin( route_pose.yaw ) + dy * std::cos( route_pose.yaw );
-
-        conflict.object_s_min = std::min( conflict.object_s_min, corner_s );
-        conflict.object_s_max = std::max( conflict.object_s_max, corner_s );
-        conflict.object_l_min = std::min( conflict.object_l_min, corner_l );
-        conflict.object_l_max = std::max( conflict.object_l_max, corner_l );
-    }
-
-    if( !std::isfinite( conflict.object_s_min ) ||
-        !std::isfinite( conflict.object_s_max ) )
-    {
-        return std::nullopt;
-    }
-
-    conflict.inflated_s_min = conflict.object_s_min - std::max( 0.0, params.rear_clearance );
-    conflict.inflated_s_max = conflict.object_s_max + std::max( 0.0, params.front_clearance );
-    conflict.inflated_l_min = conflict.object_l_min - std::max( 0.0, params.side_clearance );
-    conflict.inflated_l_max = conflict.object_l_max + std::max( 0.0, params.side_clearance );
-
-    auto envelope = make_ghost_envelope( conflict, now, params, false );
-    envelope.created_from_original_avoidance_obstacle = true;
-    envelope.hold_until_passed = true;
-    return envelope;
-}
-
-void
-update_obstacle_ghost_memory(
-    ActiveAvoidanceState& state,
-    const planner::RouteCorridorCheckResult& safety,
-    double ego_s,
-    double now,
-    const planner::ObstacleAvoidanceParams& params )
-{
-    for( auto& envelope : state.ghost_memory )
-    {
-        envelope.is_ghost = true;
-        ++envelope.consecutive_missing_cycles;
-    }
-
-    // Process every conflict seen this cycle, not only the most relevant one,
-    // so simultaneously visible obstacles do not age out as "missing".
-    const auto detected_conflicts =
-        !safety.conflicts.empty()
-            ? safety.conflicts
-            : ( safety.has_conflict
-                    ? std::vector<planner::RouteCorridorConflict>{ safety.conflict }
-                    : std::vector<planner::RouteCorridorConflict>{} );
-
-    // Envelopes may have been created on a differently shifted reference line;
-    // widen the lateral match band by the active shift.
-    const double match_extra_l_margin = std::fabs( state.lateral_shift );
-
-    for( const auto& detected_conflict : detected_conflicts )
-    {
-        auto match_it =
-            std::find_if(
-                state.ghost_memory.begin(),
-                state.ghost_memory.end(),
-                [&]( const planner::ObstacleGhostEnvelope& envelope )
-                {
-                    return envelopes_overlap_with_margin(
-                        envelope,
-                        detected_conflict,
-                        params,
-                        match_extra_l_margin );
-                } );
-
-        const auto updated =
-            make_ghost_envelope( detected_conflict, now, params, true );
-
-        if( match_it != state.ghost_memory.end() )
-        {
-            const double first_seen_time = match_it->first_seen_time;
-            const int seen_count = match_it->seen_count + 1;
-            const bool original_obstacle =
-                match_it->created_from_original_avoidance_obstacle;
-            *match_it = updated;
-            match_it->first_seen_time = first_seen_time;
-            match_it->seen_count = seen_count;
-            match_it->consecutive_missing_cycles = 0;
-            match_it->created_from_original_avoidance_obstacle = original_obstacle;
-            match_it->hold_until_passed =
-                original_obstacle ||
-                ( match_it->object_class == planner::RouteCorridorObjectClass::StaticOrSlow &&
-                  match_it->seen_count >= 2 );
-        }
-        else
-        {
-            state.ghost_memory.push_back( updated );
-        }
-    }
-
-    state.ghost_memory.erase(
-        std::remove_if(
-            state.ghost_memory.begin(),
-            state.ghost_memory.end(),
-            [&]( const planner::ObstacleGhostEnvelope& envelope )
-            {
-                const bool passed_release =
-                    envelope.hold_until_passed &&
-                    std::isfinite( ego_s ) &&
-                    ego_s > envelope.hold_until_s;
-                const bool timeout_release =
-                    envelope.is_ghost &&
-                    !envelope.created_from_original_avoidance_obstacle &&
-                    now >= envelope.last_seen_time + std::max( 0.0, params.ghost_obstacle_hold_time ) &&
-                    ( envelope.object_class != planner::RouteCorridorObjectClass::StaticOrSlow ||
-                      envelope.seen_count < 2 ||
-                      envelope.consecutive_missing_cycles >=
-                          std::max( 1, params.ghost_dynamic_max_missing_cycles ) );
-                const bool lifetime_release =
-                    envelope.is_ghost &&
-                    !envelope.created_from_original_avoidance_obstacle &&
-                    std::isfinite( envelope.first_seen_time ) &&
-                    now >= envelope.first_seen_time + std::max( params.ghost_obstacle_hold_time, params.ghost_obstacle_max_lifetime );
-
-                return passed_release || timeout_release || lifetime_release;
-            } ),
-        state.ghost_memory.end() );
-}
-
 void
 start_active_avoidance_state(
     ActiveAvoidanceState& state,
     const planner::ObstacleAvoidanceResult& oa_result,
-    const map::Route& original_route,
-    const dynamics::TrafficParticipantSet& traffic_participants,
-    const dynamics::VehicleStateDynamic& ego,
-    const planner::ObstacleAvoidanceParams& params,
-    bool preserve_existing_ghost_memory )
+    const map::Route& mission_route_baseline )
 {
-    const auto previous_ghost_memory =
-        preserve_existing_ghost_memory
-            ? state.ghost_memory
-            : std::vector<planner::ObstacleGhostEnvelope>{};
-
     state.active = true;
     state.base_modified_route = oa_result.modified_route;
-    state.modified_route = oa_result.modified_route;
-
-    state.obstacle_id = oa_result.obstacle_id;
-    state.obstacle_ids = oa_result.obstacle_ids;
+    state.mission_route_baseline = mission_route_baseline;
 
     state.shift_start_s = oa_result.shift_start_s;
     state.shift_end_s = oa_result.shift_end_s;
@@ -312,141 +36,35 @@ start_active_avoidance_state(
     state.obstacle_s_min = oa_result.obstacle_s_min;
 
     state.lateral_shift = oa_result.lateral_shift;
+    state.avoidance_speed = oa_result.avoidance_speed;
     state.in_lane = oa_result.in_lane;
+
+    // Persist the monotone per-object hull union used to rebuild the active
+    // modified route from the fixed mission-route frame.
+    state.committed_contributions = oa_result.shift_contributions;
+
     state.maneuver = oa_result.maneuver;
 
     state.last_modified_s = std::numeric_limits<double>::quiet_NaN();
     state.last_modified_time = std::numeric_limits<double>::quiet_NaN();
-    state.ghost_memory.clear();
-
-    const auto memory_seed_obstacle_ids =
-        oa_result.obstacle_ids.empty()
-            ? std::vector<int>{ oa_result.obstacle_id }
-            : oa_result.obstacle_ids;
-
-    for( const int obstacle_id : memory_seed_obstacle_ids )
-    {
-        const auto original_participant_it =
-            traffic_participants.participants.find( obstacle_id );
-        if( original_participant_it == traffic_participants.participants.end() )
-        {
-            continue;
-        }
-
-        const auto original_envelope =
-            make_original_obstacle_envelope_from_participant(
-                original_route,
-                original_participant_it->second,
-                ego.time,
-                params );
-        if( original_envelope.has_value() )
-        {
-            state.ghost_memory.push_back( original_envelope.value() );
-        }
-    }
-
-    for( const auto& previous_envelope : previous_ghost_memory )
-    {
-        const auto duplicate_it =
-            std::find_if(
-                state.ghost_memory.begin(),
-                state.ghost_memory.end(),
-                [&]( const planner::ObstacleGhostEnvelope& current_envelope )
-                {
-                    return ghost_envelopes_overlap_with_margin(
-                        current_envelope,
-                        previous_envelope,
-                        params,
-                        std::fabs( oa_result.lateral_shift ) );
-                } );
-
-        if( duplicate_it == state.ghost_memory.end() )
-        {
-            state.ghost_memory.push_back( previous_envelope );
-        }
-    }
 }
 
-std::optional<planner::RouteCorridorConflict>
-most_relevant_ghost_conflict(
-    const ActiveAvoidanceState& state,
-    double ego_s )
+bool
+should_stop_for_oncoming_monitor_result(
+    const ObstacleAvoidanceMonitorResult& monitor_result )
 {
-    std::optional<planner::RouteCorridorConflict> best;
-
-    for( const auto& envelope : state.ghost_memory )
+    if( monitor_result.should_abort_before_commitment )
     {
-        if( !envelope.is_ghost )
-        {
-            continue;
-        }
-        if( envelope.created_from_original_avoidance_obstacle )
-        {
-            continue;
-        }
-        if( std::isfinite( ego_s ) && ego_s > envelope.hold_until_s )
-        {
-            continue;
-        }
-
-        planner::RouteCorridorConflict conflict;
-        conflict.participant_id = envelope.last_participant_id;
-        conflict.object_class = envelope.object_class;
-        conflict.object_s_min = envelope.object_s_min;
-        conflict.object_s_max = envelope.object_s_max;
-        conflict.object_l_min = envelope.object_l_min;
-        conflict.object_l_max = envelope.object_l_max;
-        conflict.inflated_s_min = envelope.inflated_s_min;
-        conflict.inflated_s_max = envelope.inflated_s_max;
-        conflict.inflated_l_min = envelope.inflated_l_min;
-        conflict.inflated_l_max = envelope.inflated_l_max;
-        conflict.distance_s = std::isfinite( ego_s )
-            ? std::max( 0.0, envelope.object_s_min - ego_s )
-            : std::numeric_limits<double>::infinity();
-        conflict.time_to_conflict = 0.0;
-        conflict.currently_overlaps_route_corridor = true;
-        conflict.requires_stop = true;
-        conflict.allows_replan = true;
-        conflict.ttc_source = "ghost";
-        conflict.currently_inside_corridor = true;
-        conflict.object_center_x = envelope.object_center_x;
-        conflict.object_center_y = envelope.object_center_y;
-        conflict.object_yaw = envelope.object_yaw;
-        conflict.object_length = envelope.object_length;
-        conflict.object_width = envelope.object_width;
-        conflict.footprint_x = envelope.footprint_x;
-        conflict.footprint_y = envelope.footprint_y;
-        conflict.has_world_footprint = envelope.has_world_footprint;
-        conflict.reason = "ghost envelope retained after temporary detection loss";
-
-        if( !best.has_value() || conflict.distance_s < best->distance_s )
-        {
-            best = conflict;
-        }
+        return true;
     }
 
-    return best;
-}
-
-std::optional<planner::ObstacleGhostEnvelope>
-find_unpassed_original_ghost(
-    const ActiveAvoidanceState& state,
-    double ego_s )
-{
-    for( const auto& envelope : state.ghost_memory )
+    if( monitor_result.safe_to_continue )
     {
-        if( envelope.created_from_original_avoidance_obstacle &&
-            envelope.hold_until_passed &&
-            std::isfinite( ego_s ) &&
-            ego_s <= envelope.hold_until_s )
-        {
-            return envelope;
-        }
+        return false;
     }
 
-    return std::nullopt;
+    return true;
 }
-
 
 // Build a RouteCorridorConflict from an active opposite-lane monitor result so
 // the route-based stop policy can consume it. reference_s is the ego s on the
@@ -454,8 +72,7 @@ find_unpassed_original_ghost(
 planner::RouteCorridorConflict
 make_oncoming_monitor_conflict(
     const planner::ObstacleAvoidanceMonitorResult& monitor_result,
-    double reference_s,
-    const char* ttc_source )
+    double reference_s )
 {
     planner::RouteCorridorConflict conflict;
     conflict.participant_id = monitor_result.oncoming.participant_id;
@@ -466,36 +83,8 @@ make_oncoming_monitor_conflict(
         std::max( 0.0, monitor_result.oncoming.conflict_start_s - reference_s );
     conflict.time_to_conflict = monitor_result.oncoming.oncoming_arrival_time;
     conflict.predicted_spatiotemporal_conflict = true;
-    conflict.requires_stop = true;
-    conflict.ttc_source = ttc_source;
     conflict.reason = monitor_result.reason;
     return conflict;
-}
-
-bool
-static_or_slow_conflict_has_side_clearance(
-    const planner::RouteCorridorConflict& conflict,
-    const dynamics::PhysicalVehicleParameters& vehicle_params,
-    const planner::ObstacleAvoidanceParams& params )
-{
-    if( conflict.object_class != planner::RouteCorridorObjectClass::StaticOrSlow ||
-        conflict.currently_overlaps_ego_footprint ||
-        !std::isfinite( conflict.object_l_min ) ||
-        !std::isfinite( conflict.object_l_max ) )
-    {
-        return false;
-    }
-
-    const double ego_half_width =
-        0.5 * std::max( params.min_vehicle_dimension, vehicle_params.body_width );
-    const double actual_clearance =
-        actual_lateral_clearance_to_centered_ego(
-            conflict.object_l_min,
-            conflict.object_l_max,
-            ego_half_width );
-    const double required_clearance = std::max( 0.0, params.side_clearance );
-
-    return actual_clearance + 0.02 >= required_clearance;
 }
 
 RouteStopPlan
@@ -519,7 +108,6 @@ compute_route_stop_plan(
 
     if( !std::isfinite( plan.ego_s ) )
     {
-        plan.reason = "invalid ego projection";
         return plan;
     }
 
@@ -536,7 +124,7 @@ compute_route_stop_plan(
         ego_front_offset;
 
     plan.braking_deceleration =
-        std::max( params.min_braking_deceleration, std::fabs( vehicle_params.acceleration_min ) );
+        planned_braking_deceleration( vehicle_params, params );
     plan.required_braking_distance =
         std::max( 0.0, ego.vx ) * std::max( 0.0, ego.vx ) /
         ( 2.0 * plan.braking_deceleration );
@@ -547,7 +135,6 @@ compute_route_stop_plan(
     plan.valid =
         std::isfinite( plan.stop_s ) &&
         std::isfinite( plan.brake_start_s );
-    plan.reason = plan.valid ? "valid" : "invalid stop geometry";
 
     return plan;
 }
@@ -578,31 +165,24 @@ should_stop_for_active_conflict(
         return true;
     }
 
-    if( conflict.predicted_spatiotemporal_conflict &&
-        conflict.time_to_conflict <= params.modified_route_stop_ttc_threshold )
-    {
-        if( conflict.object_class != planner::RouteCorridorObjectClass::StaticOrSlow )
-        {
-            return true;
-        }
+    const bool relevant_conflict =
+        conflict.predicted_spatiotemporal_conflict ||
+        conflict.currently_overlaps_route_corridor;
 
-        return stop_plan.ego_s >= stop_plan.brake_start_s;
-    }
-
-    if( conflict.currently_overlaps_route_corridor &&
-        stop_plan.ego_s >= stop_plan.brake_start_s )
-    {
-        return true;
-    }
-
-    return false;
+    // The stop decision is purely spatial and vehicle-dependent: begin once ego
+    // reaches the braking point derived from current speed, planned deceleration,
+    // stand-off and braking safety margin. A separate fixed TTC threshold can
+    // otherwise request braking too late at high speed or too early at low speed.
+    return relevant_conflict &&
+           stop_plan.ego_s >= stop_plan.brake_start_s;
 }
 
 std::optional<double>
 compute_monotonic_ego_s_modified(
     double ego_s_modified_raw,
     const dynamics::VehicleStateDynamic& vehicle_state_dynamic,
-    ActiveAvoidanceState& state )
+    ActiveAvoidanceState& state,
+    const ObstacleAvoidanceParams& params )
 {
     double ego_s_modified = ego_s_modified_raw;
 
@@ -623,7 +203,8 @@ compute_monotonic_ego_s_modified(
         const double odometry_advance =
             std::max( 0.0, vehicle_state_dynamic.vx ) * dt;
         const double max_plausible_advance =
-            odometry_advance + MAX_PLAUSIBLE_MODIFIED_S_JUMP;
+            odometry_advance +
+            std::max( 0.0, params.projection_progress_tolerance );
 
         if( ego_s_modified_raw < state.last_modified_s )
         {
@@ -633,15 +214,6 @@ compute_monotonic_ego_s_modified(
                  max_plausible_advance )
         {
             ego_s_modified = state.last_modified_s + odometry_advance;
-            // std::fprintf(
-                // stderr,
-                // "[OA][WARN] implausible ego_s_modified jump raw=%.2f last=%.2f "
-                // "max_advance=%.2f; using odometry advance to %.2f\n",
-                // ego_s_modified_raw,
-                // state.last_modified_s,
-                // max_plausible_advance,
-                // ego_s_modified );
-            // std::fflush( stderr );
         }
     }
     else if( !std::isfinite( ego_s_modified_raw ) &&
@@ -649,11 +221,6 @@ compute_monotonic_ego_s_modified(
     {
         // Fallback: projection lost, use last valid value
         ego_s_modified = state.last_modified_s;
-        // std::fprintf(
-            // stderr,
-            // "[OA][WARN] ego_s_modified projection lost; using last_modified_s=%.2f\n",
-            // state.last_modified_s );
-        // std::fflush( stderr );
     }
 
     if( !std::isfinite( ego_s_modified ) )

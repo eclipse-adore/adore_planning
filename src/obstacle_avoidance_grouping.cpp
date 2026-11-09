@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: EPL-2.0
  ********************************************************************************/
 
-// Static-obstacle detection and clustering: participant classification
-// (static / slow-oncoming / opposite-heading), per-obstacle envelopes grouped
-// into avoidance groups, and selection of the relevant static group ahead of
-// ego. Depends on the geometry and projection helpers in oa_detail.
+// Static-obstacle detection: shared motion classification, per-obstacle
+// route-frame envelopes, and grouping by connected lateral-shift support.
+// Further or newly revealed objects are added cyclically from the driven-route
+// corridor check. Depends on the geometry and projection helpers in oa_detail.
 
 #include "obstacle_avoidance_internal.hpp"
 
@@ -15,6 +15,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace adore
@@ -25,80 +26,13 @@ namespace oa_detail
 {
 
 bool
-participant_has_future_motion_prediction(
-  const dynamics::TrafficParticipant& participant,
-  double min_motion_speed,
-  double min_motion_distance )
-{
-  if( !participant.trajectory.has_value() ||
-      participant.trajectory->states.size() < 2 )
-  {
-    return false;
-  }
-
-  const double now_time = participant.state.time;
-  const double motion_speed_threshold =
-    std::max( 0.0, min_motion_speed );
-  const double motion_distance_threshold =
-    std::max( 0.5, min_motion_distance );
-
-  bool saw_usable_state = false;
-
-  for( const auto& state : participant.trajectory->states )
-  {
-    if( std::isfinite( now_time ) &&
-        std::isfinite( state.time ) &&
-        state.time + 0.5 < now_time )
-    {
-      continue;
-    }
-
-    saw_usable_state = true;
-
-    if( std::fabs( state.vx ) > motion_speed_threshold )
-    {
-      return true;
-    }
-
-    const double distance_from_current =
-      std::hypot(
-        state.x - participant.state.x,
-        state.y - participant.state.y );
-
-    if( distance_from_current > motion_distance_threshold )
-    {
-      return true;
-    }
-  }
-
-  return saw_usable_state && std::fabs( participant.state.vx ) > motion_speed_threshold;
-}
-
-bool
-participant_is_slow_opposite_direction_traffic(
-  const map::Route& route,
+participant_is_static_for_avoidance(
   const dynamics::TrafficParticipant& participant,
   const ObstacleAvoidanceParams& params )
 {
-  const double speed = std::fabs( participant.state.vx );
-
-  if( speed > params.max_static_object_speed )
-  {
-    return false;
-  }
-
-  const double participant_s =
-    project_s_on_reference_line( route, participant.state );
-  if( !std::isfinite( participant_s ) )
-  {
-    return false;
-  }
-
-  const auto route_pose = route.get_pose_at_s( participant_s );
-  const double yaw_diff =
-    normalize_angle( participant.state.yaw_angle - route_pose.yaw );
-
-  return std::fabs( yaw_diff ) >= params.min_oncoming_heading_diff;
+  return
+    std::hypot( participant.state.vx, participant.state.vy ) <=
+    std::max( 0.0, params.max_static_object_speed );
 }
 
 bool
@@ -120,101 +54,101 @@ participant_heading_is_opposite_to_route(
   return std::fabs( yaw_diff ) >= params.min_oncoming_heading_diff;
 }
 
-AvoidanceGroup
-make_avoidance_group_from_obstacle( const ObstacleEnvelope& obstacle )
-{
-  AvoidanceGroup group;
-  group.obstacles.push_back( obstacle );
-  group.envelope = obstacle;
-  return group;
-}
-
-void
-append_obstacle_to_avoidance_group( AvoidanceGroup& group,
-                                   const ObstacleEnvelope& obstacle,
-                                   const ObstacleAvoidanceParams& params,
-                                   bool hard_merge )
-{
-  if( group.obstacles.empty() )
-  {
-    group = make_avoidance_group_from_obstacle( obstacle );
-    return;
-  }
-
-  if( hard_merge )
-  {
-    // "Hard merge" is a maneuver-profile decision only: keep the shift held
-    // between close obstacles. Do not merge lateral geometry here, because
-    // candidate generation and validation must use the individual hulls.
-    group.obstacles.push_back( obstacle );
-    group.hard_merged = true;
-  }
-  else
-  {
-    group.obstacles.push_back( obstacle );
-    group.uses_hull_curve = true;
-  }
-
-  group.envelope.object_s_min =
-    std::min( group.envelope.object_s_min, obstacle.object_s_min );
-  group.envelope.object_s_max =
-    std::max( group.envelope.object_s_max, obstacle.object_s_max );
-  group.envelope.object_l_min =
-    std::min( group.envelope.object_l_min, obstacle.object_l_min );
-  group.envelope.object_l_max =
-    std::max( group.envelope.object_l_max, obstacle.object_l_max );
-  group.envelope.object_count += obstacle.object_count;
-  group.envelope.participant_ids.insert(
-    group.envelope.participant_ids.end(),
-    obstacle.participant_ids.begin(),
-    obstacle.participant_ids.end() );
-  group.envelope.overlaps_ego_corridor =
-    group.envelope.overlaps_ego_corridor || obstacle.overlaps_ego_corridor;
-
-  refresh_obstacle_envelope_derived_values( group.envelope, params );
-}
-
-std::vector<AvoidanceGroup>
-make_avoidance_groups_from_clusters(
-  const std::vector<ObstacleEnvelope>& obstacle_hulls,
+std::pair<double, double>
+avoidance_shift_support_interval(
+  const ObstacleEnvelope& obstacle,
+  const dynamics::PhysicalVehicleParameters& ego_params,
   const ObstacleAvoidanceParams& params )
 {
-  std::vector<AvoidanceGroup> groups;
-  groups.reserve( obstacle_hulls.size() );
-
-  const double hard_merge_gap_s =
-    std::max( 0.0, params.cluster_hold_gap_s );
-  const double shift_hull_gap_s =
-    std::max( hard_merge_gap_s, params.shift_hull_gap_s );
-
-  for( const auto& obstacle : obstacle_hulls )
+  if( obstacle.has_persistent_profile )
   {
-    if( groups.empty() )
-    {
-      groups.push_back( make_avoidance_group_from_obstacle( obstacle ) );
-      continue;
-    }
-
-    const double gap_s =
-      obstacle.object_s_min - groups.back().envelope.object_s_max;
-
-    if( gap_s <= hard_merge_gap_s )
-    {
-
-      append_obstacle_to_avoidance_group( groups.back(), obstacle, params, true );
-    }
-    else if( gap_s <= shift_hull_gap_s )
-    {
-
-      append_obstacle_to_avoidance_group( groups.back(), obstacle, params, false );
-    }
-    else
-    {
-      groups.push_back( make_avoidance_group_from_obstacle( obstacle ) );
-    }
+    return {
+      obstacle.persistent_ramp_start_s,
+      obstacle.persistent_ramp_end_s };
   }
 
-  return groups;
+  const double ego_half_length =
+    symmetric_shift_ego_half_length( ego_params );
+  const double full_start_s = obstacle.object_s_min - ego_half_length;
+  const double full_end_s = obstacle.object_s_max + ego_half_length;
+  return {
+    std::max(
+      0.0,
+      full_start_s - std::max( 0.0, params.front_clearance ) ),
+    full_end_s + std::max( 0.0, params.rear_clearance ) };
+}
+
+double
+avoidance_group_maneuver_end_s(
+  const AvoidanceGroup& group,
+  const dynamics::PhysicalVehicleParameters& ego_params,
+  const ObstacleAvoidanceParams& params )
+{
+  double maneuver_end_s = -std::numeric_limits<double>::infinity();
+  for( const auto& obstacle : group.obstacles )
+  {
+    maneuver_end_s =
+      std::max(
+        maneuver_end_s,
+        avoidance_shift_support_interval(
+          obstacle, ego_params, params ).second );
+  }
+  return maneuver_end_s;
+}
+
+// Carry the obstacles selected for one maneuver as one avoidance group. The
+// obstacles keep their individual hulls (the shift is composed per obstacle in
+// avoidance_shift_offset_at_s, so there is no lateral union that would inflate
+// the shift); the envelope is their union, used only for the group s-window,
+// participant id list and coarse hints.
+AvoidanceGroup
+make_avoidance_group_from_obstacles( std::vector<ObstacleEnvelope> obstacles )
+{
+  AvoidanceGroup group;
+  if( obstacles.empty() )
+  {
+    return group;
+  }
+
+  std::sort(
+    obstacles.begin(),
+    obstacles.end(),
+    []( const ObstacleEnvelope& a, const ObstacleEnvelope& b )
+    {
+      return a.object_s_min < b.object_s_min;
+    } );
+
+  ObstacleEnvelope envelope;
+  // Prefer a real participant id for the group id. A frozen hull can be
+  // id-independent, but the group should still use a real id when available.
+  envelope.id = obstacles.front().id;
+  for( const auto& obstacle : obstacles )
+  {
+    if( obstacle.id >= 0 )
+    {
+      envelope.id = obstacle.id;
+      break;
+    }
+  }
+  for( const auto& obstacle : obstacles )
+  {
+    envelope.object_s_min = std::min( envelope.object_s_min, obstacle.object_s_min );
+    envelope.object_s_max = std::max( envelope.object_s_max, obstacle.object_s_max );
+    envelope.object_l_min = std::min( envelope.object_l_min, obstacle.object_l_min );
+    envelope.object_l_max = std::max( envelope.object_l_max, obstacle.object_l_max );
+    envelope.participant_ids.insert(
+      envelope.participant_ids.end(),
+      obstacle.participant_ids.begin(),
+      obstacle.participant_ids.end() );
+    envelope.overlaps_ego_corridor =
+      envelope.overlaps_ego_corridor || obstacle.overlaps_ego_corridor;
+  }
+  envelope.center_s =
+    0.5 * ( envelope.object_s_min + envelope.object_s_max );
+
+  group.obstacles = std::move( obstacles );
+  group.envelope = envelope;
+  return group;
 }
 
 bool
@@ -244,7 +178,8 @@ find_static_obstacle_group_on_route(
   const dynamics::TrafficParticipantSet& traffic_participants,
   const dynamics::PhysicalVehicleParameters& ego_params,
   const ObstacleAvoidanceParams& params,
-  const std::vector<int>* ignored_participant_ids )
+  const std::vector<AvoidanceShiftContribution>* committed_contributions,
+  const std::vector<int>* forced_participant_ids )
 {
   const double ego_s = project_s_on_reference_line( route, ego );
   if( !std::isfinite( ego_s ) )
@@ -252,64 +187,205 @@ find_static_obstacle_group_on_route(
     return std::nullopt;
   }
 
-  const double ego_half_width =
-    0.5 * std::max( params.min_vehicle_dimension, ego_params.body_width );
-  const double side_clearance = std::max( 0.0, params.side_clearance );
-
-  const double search_start_s = ego_s + params.min_obstacle_route_overlap;
-  const double search_end_s   = ego_s + params.max_object_ahead;
-
-  const double cluster_search_end_s =
-    search_end_s +
-    std::max(
-      std::max( 0.0, params.cluster_hold_gap_s ),
-      std::max( 0.0, params.shift_hull_gap_s ) ) +
-    params.front_clearance +
-    params.rear_clearance;
+  const double ego_half_width = 0.5 * ego_params.body_width;
 
   std::vector<ObstacleEnvelope> obstacles;
-  bool saw_trigger_obstacle = false;
+
+  // Start with the frozen hulls of the active maneuver. They are already in the
+  // mission-route frame, so rebuilding from them cannot stack a shift on top of
+  // the previously modified route. A later observation may only expand one of
+  // these hulls; disappearance or tracker jitter never shrinks it.
+  if( committed_contributions != nullptr )
+  {
+    obstacles.reserve(
+      committed_contributions->size() +
+      traffic_participants.participants.size() );
+
+    for( const auto& contribution : *committed_contributions )
+    {
+      if( !std::isfinite( contribution.object_s_min ) ||
+          !std::isfinite( contribution.object_s_max ) ||
+          !std::isfinite( contribution.object_l_min ) ||
+          !std::isfinite( contribution.object_l_max ) ||
+          contribution.object_s_max < contribution.object_s_min ||
+          contribution.object_l_max < contribution.object_l_min )
+      {
+        continue;
+      }
+
+      ObstacleEnvelope frozen;
+      frozen.id =
+        contribution.participant_ids.empty()
+          ? -1
+          : contribution.participant_ids.front();
+      frozen.participant_ids = contribution.participant_ids;
+      frozen.object_s_min = contribution.object_s_min;
+      frozen.object_s_max = contribution.object_s_max;
+      frozen.object_l_min = contribution.object_l_min;
+      frozen.object_l_max = contribution.object_l_max;
+      frozen.center_s =
+        0.5 * ( frozen.object_s_min + frozen.object_s_max );
+      frozen.overlaps_ego_corridor = true;
+      frozen.committed_hold = true;
+
+      const bool valid_profile =
+        contribution.has_persistent_profile &&
+        std::isfinite( contribution.signed_shift ) &&
+        std::isfinite( contribution.ramp_start_s ) &&
+        std::isfinite( contribution.full_shift_start_s ) &&
+        std::isfinite( contribution.full_shift_end_s ) &&
+        std::isfinite( contribution.ramp_end_s ) &&
+        contribution.ramp_start_s <= contribution.full_shift_start_s &&
+        contribution.full_shift_start_s <= contribution.full_shift_end_s &&
+        contribution.full_shift_end_s <= contribution.ramp_end_s;
+      if( valid_profile )
+      {
+        frozen.has_persistent_profile = true;
+        frozen.persistent_signed_shift = contribution.signed_shift;
+        frozen.persistent_ramp_start_s = contribution.ramp_start_s;
+        frozen.persistent_full_shift_start_s =
+          contribution.full_shift_start_s;
+        frozen.persistent_full_shift_end_s =
+          contribution.full_shift_end_s;
+        frozen.persistent_ramp_end_s = contribution.ramp_end_s;
+      }
+
+      obstacles.push_back( std::move( frozen ) );
+    }
+  }
+
+  const auto merge_observation =
+    [&]( ObstacleEnvelope observation )
+    {
+      auto existing_it =
+        std::find_if(
+          obstacles.begin(),
+          obstacles.end(),
+          [&]( const ObstacleEnvelope& existing )
+          {
+            return std::any_of(
+              observation.participant_ids.begin(),
+              observation.participant_ids.end(),
+              [&]( int id )
+              {
+                return contains_participant_id(
+                  existing.participant_ids, id );
+              } );
+          } );
+
+      if( existing_it == obstacles.end() )
+      {
+        obstacles.push_back( std::move( observation ) );
+        return;
+      }
+
+      existing_it->object_s_min =
+        std::min( existing_it->object_s_min, observation.object_s_min );
+      existing_it->object_s_max =
+        std::max( existing_it->object_s_max, observation.object_s_max );
+      existing_it->object_l_min =
+        std::min( existing_it->object_l_min, observation.object_l_min );
+      existing_it->object_l_max =
+        std::max( existing_it->object_l_max, observation.object_l_max );
+      for( const int id : observation.participant_ids )
+      {
+        if( !contains_participant_id( existing_it->participant_ids, id ) )
+        {
+          existing_it->participant_ids.push_back( id );
+        }
+      }
+      existing_it->center_s =
+        0.5 * ( existing_it->object_s_min + existing_it->object_s_max );
+      existing_it->overlaps_ego_corridor = true;
+
+      if( existing_it->has_persistent_profile )
+      {
+        const double ego_half_length =
+          symmetric_shift_ego_half_length( ego_params );
+        const double expanded_full_start =
+          existing_it->object_s_min - ego_half_length;
+        const double expanded_full_end =
+          existing_it->object_s_max + ego_half_length;
+        const double expanded_ramp_start =
+          std::max(
+            0.0,
+            expanded_full_start -
+              std::max( 0.0, params.front_clearance ) );
+        const double expanded_ramp_end =
+          expanded_full_end + std::max( 0.0, params.rear_clearance );
+
+        existing_it->persistent_full_shift_start_s =
+          std::min(
+            existing_it->persistent_full_shift_start_s,
+            expanded_full_start );
+        existing_it->persistent_full_shift_end_s =
+          std::max(
+            existing_it->persistent_full_shift_end_s,
+            expanded_full_end );
+        existing_it->persistent_ramp_start_s =
+          std::min(
+            existing_it->persistent_ramp_start_s,
+            expanded_ramp_start );
+        existing_it->persistent_ramp_end_s =
+          std::max(
+            existing_it->persistent_ramp_end_s,
+            expanded_ramp_end );
+      }
+
+    };
 
   for( const auto& [id, participant] : traffic_participants.participants )
   {
-    // Skip obstacles already handled by an active maneuver (e.g. the one ego is
-    // currently passing): detection must lock onto the genuinely new obstacle,
-    // not re-target a participant the caller is already avoiding.
-    if( ignored_participant_ids != nullptr &&
-        contains_participant_id( *ignored_participant_ids, static_cast<int>( id ) ) )
+    const int participant_id = static_cast<int>( id );
+    const bool forced_from_driven_corridor =
+      forced_participant_ids != nullptr &&
+      contains_participant_id(
+        *forced_participant_ids, participant_id );
+    const bool updates_committed_hull =
+      std::any_of(
+        obstacles.begin(),
+        obstacles.end(),
+        [&]( const ObstacleEnvelope& obstacle )
+        {
+          return contains_participant_id(
+            obstacle.participant_ids, participant_id );
+        } );
+
+    // During an active maneuver, membership comes exclusively from the corridor
+    // of the route ego actually drives. Other mission-corridor objects are not
+    // added merely because a different object triggered this replan.
+    if( committed_contributions != nullptr &&
+        !forced_from_driven_corridor &&
+        !updates_committed_hull )
     {
       continue;
     }
 
-    if( std::fabs( participant.state.vx ) > params.max_static_object_speed )
-    {
-      continue;
-    }
-
-    if( participant_has_future_motion_prediction(
-          participant,
-          params.max_static_object_speed,
-          1.0 ) ||
-        ( std::fabs( participant.state.vx ) > params.min_motion_speed &&
-          participant_is_slow_opposite_direction_traffic(
-            route,
-            participant,
-            params ) ) )
+    if( !participant_is_static_for_avoidance( participant, params ) )
     {
       continue;
     }
 
     ObstacleEnvelope env;
-    env.id = static_cast<int>( id );
+    env.id = participant_id;
     env.participant_ids.push_back( env.id );
 
     if( !project_obstacle_to_route_analytic(
           route,
           participant,
           params,
-          ego_s,
           ego_half_width,
           env ) )
+    {
+      continue;
+    }
+
+    // The initial search only considers objects whose leading edge has not
+    // passed ego's reference point. An object forced by the corridor of the
+    // route ego is actually driving is exempt: it can still overlap the rear
+    // part of the ego footprint after its leading edge passed the rear axle.
+    if( !forced_from_driven_corridor &&
+        env.object_s_max < ego_s )
     {
       continue;
     }
@@ -325,148 +401,80 @@ find_static_obstacle_group_on_route(
     // into the actual ego (trigger) corridor; otherwise they are oncoming /
     // other-lane traffic handled by the oncoming logic, not the static shift.
     // Secondary (non-trigger) obstacles are therefore never opposite-heading.
-    if( opposite_heading && !env.overlaps_ego_corridor )
+    if( opposite_heading &&
+        !env.overlaps_ego_corridor &&
+        !forced_from_driven_corridor )
     {
       continue;
     }
 
-    const double obstacle_timing_s_min =
-      env.object_s_min - std::max( 0.0, params.front_clearance );
-    const double obstacle_timing_s_max =
-      env.object_s_max + std::max( 0.0, params.rear_clearance );
-
-    if( obstacle_timing_s_max < search_start_s ||
-        obstacle_timing_s_min > cluster_search_end_s )
+    // Only obstacles that actually reach into the ego corridor drive a maneuver.
+    // Every one of them is carried (see below); objects outside the corridor are
+    // not collected now that clustering / secondary inclusion are gone.
+    if( !env.overlaps_ego_corridor &&
+        !forced_from_driven_corridor )
     {
       continue;
     }
 
-    // env.overlaps_ego_corridor marks a trigger obstacle (reaches into the ego
-    // corridor); obstacles only within the wider band are secondary and do not
-    // start a maneuver on their own.
-    saw_trigger_obstacle = saw_trigger_obstacle || env.overlaps_ego_corridor;
-
-    obstacles.push_back( env );
+    // A forced object was selected against the driven modified route. In the
+    // mission frame it can sit outside the original trigger corridor; marking it
+    // relevant makes candidate generation compute the absolute shift needed to
+    // clear that hull from the fixed mission baseline.
+    env.overlaps_ego_corridor = true;
+    merge_observation( std::move( env ) );
   }
 
-  if( obstacles.empty() || !saw_trigger_obstacle )
+  if( obstacles.empty() )
   {
-    // Nothing actually intrudes into the ego corridor: no maneuver. Obstacles
-    // found only in the wider secondary band must never start a maneuver alone.
+    // Nothing intrudes into the ego corridor and no frozen hull remains.
     return std::nullopt;
   }
 
-  // Size the secondary-inclusion band to the avoidance shift this trigger set
-  // will actually apply. An obstacle matters when the shifted ego corridor
-  // (half-width ego_half_width + side_clearance, centered on the shifted route)
-  // can reach it, i.e. when it lies within
-  //   ego_half_width + side_clearance + (planned lateral shift)
-  // of the original route centerline. Deriving the reach from the trigger
-  // geometry (the same clearance shift candidate generation computes, plus the
-  // candidate exploration steps) keeps this self-tuning: a small in-lane nudge
-  // includes only near obstacles, a large lane-change shift reaches further. A
-  // secondary obstacle is then validated for side clearance and carried as a
-  // known maneuver obstacle, instead of only surfacing on the already-shifted
-  // route and forcing a late stop. It never drives the shift itself (see the
-  // overlaps_ego_corridor guard in make_candidate_from_obstacle_hulls).
-  double max_trigger_shift = 0.0;
-  for( const auto& env : obstacles )
+  // For a new maneuver, select only the nearest connected component of
+  // lateral-shift supports. If the complete ramp/plateau/ramp intervals overlap,
+  // the route cannot return to its baseline between the objects and they must be
+  // planned together. Once an interval starts after the current component ends,
+  // the later object is a separate maneuver. It remains in the participant set
+  // and becomes actionable through the receding-horizon corridor monitor.
+  //
+  // During an active replan, do not split the caller-selected set: frozen
+  // contributions must remain intact and every forced driven-corridor intrusion
+  // must be incorporated into the same continuous route update.
+  if( committed_contributions == nullptr &&
+      forced_participant_ids == nullptr )
   {
-    if( !env.overlaps_ego_corridor )
-    {
-      continue;
-    }
-
-    const double shift_to_pass_left =
-      env.object_l_max + side_clearance + ego_half_width;
-    const double shift_to_pass_right =
-      ego_half_width + side_clearance - env.object_l_min;
-    max_trigger_shift =
-      std::max( { max_trigger_shift, shift_to_pass_left, shift_to_pass_right } );
-  }
-  max_trigger_shift +=
-    std::max( 0, params.lateral_candidate_extra_steps ) *
-    std::max( 0.0, params.lateral_candidate_extra_step );
-
-  const double secondary_inclusion_half_width =
-    ego_half_width + side_clearance + max_trigger_shift;
-
-  obstacles.erase(
-    std::remove_if(
+    std::sort(
       obstacles.begin(),
       obstacles.end(),
-      [&]( const ObstacleEnvelope& env )
+      []( const ObstacleEnvelope& a, const ObstacleEnvelope& b )
       {
-        if( env.overlaps_ego_corridor )
-        {
-          return false; // always keep trigger obstacles
-        }
-        return !( env.object_l_min <= secondary_inclusion_half_width &&
-                  env.object_l_max >= -secondary_inclusion_half_width );
-      } ),
-    obstacles.end() );
+        return a.object_s_min < b.object_s_min;
+      } );
 
-  std::sort(
-    obstacles.begin(),
-    obstacles.end(),
-    []( const ObstacleEnvelope& a, const ObstacleEnvelope& b )
-    {
-      if( std::fabs( a.object_s_min - b.object_s_min ) < 1e-6 )
-      {
-        return a.object_s_max < b.object_s_max;
-      }
-      return a.object_s_min < b.object_s_min;
-    } );
+    std::size_t connected_count = 1;
+    double connected_end_s =
+      avoidance_shift_support_interval(
+        obstacles.front(), ego_params, params ).second;
 
-  if( !params.clustering_enabled )
-  {
-    // Without clustering only the nearest trigger obstacle drives the maneuver;
-    // secondary-band obstacles are not linked in this mode. obstacles is sorted
-    // by s, so the first trigger is the nearest one.
-    for( const auto& obstacle : obstacles )
+    for( std::size_t i = 1; i < obstacles.size(); ++i )
     {
-      if( obstacle.overlaps_ego_corridor )
+      const auto support =
+        avoidance_shift_support_interval(
+          obstacles[i], ego_params, params );
+      if( support.first > connected_end_s + 1e-6 )
       {
-        return make_avoidance_group_from_obstacle( obstacle );
+        break;
       }
+
+      connected_end_s = std::max( connected_end_s, support.second );
+      ++connected_count;
     }
 
-    return std::nullopt;
+    obstacles.resize( connected_count );
   }
 
-  auto groups = make_avoidance_groups_from_clusters( obstacles, params );
-
-  std::optional<AvoidanceGroup> best_group;
-  double best_distance_s = std::numeric_limits<double>::infinity();
-
-  for( const auto& group : groups )
-  {
-    if( !group.envelope.overlaps_ego_corridor )
-    {
-      continue;
-    }
-
-    const double group_timing_s_min =
-      group.envelope.object_s_min - std::max( 0.0, params.front_clearance );
-    const double group_timing_s_max =
-      group.envelope.object_s_max + std::max( 0.0, params.rear_clearance );
-
-    if( group_timing_s_max < search_start_s || group_timing_s_min > search_end_s )
-    {
-      continue;
-    }
-
-    const double nearest_relevant_s = std::max( group_timing_s_min, ego_s );
-    const double distance_s = nearest_relevant_s - ego_s;
-
-    if( !best_group.has_value() || distance_s < best_distance_s )
-    {
-      best_group = group;
-      best_distance_s = distance_s;
-    }
-  }
-
-  return best_group;
+  return make_avoidance_group_from_obstacles( std::move( obstacles ) );
 }
 
 } // namespace oa_detail

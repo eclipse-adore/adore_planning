@@ -117,6 +117,7 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
   }
 
   constexpr double min_avg_speed  = 0.1;    // m/s, avoid division by ~0
+  constexpr double stopped_speed  = 1e-6;   // a zero-speed route point is a stop boundary
   constexpr double max_total_time = 3600.0; // clamp to 1h to avoid insane trajectories
 
   auto it      = speed_profile.s_to_speed.begin();
@@ -184,6 +185,30 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
 
     initial_trajectory.states.push_back( state );
 
+    // A zero-speed route point is a spatial stop boundary: stop AT it instead of
+    // creeping past it (the min_avg_speed clamp above would otherwise keep
+    // advancing the pose while vx=0). Key off the segment END speed (v2): break
+    // only at a *downstream* stop, never on v1 alone -> a start from standstill
+    // (v1=0, v2>0) must keep building and drive off. If the vehicle was still
+    // moving into the stop (v1>0), add the stop pose at s2 so it halts AT s2;
+    // if it was already stopped (v1~0), hold here and drop later route points.
+    if( v2 <= stopped_speed )
+    {
+      if( v1 > stopped_speed )
+      {
+        const auto stop_pose = route.get_pose_at_s( s2 );
+
+        adore::dynamics::VehicleStateDynamic stop_state;
+        stop_state.x         = stop_pose.x;
+        stop_state.y         = stop_pose.y;
+        stop_state.yaw_angle = stop_pose.yaw;
+        stop_state.vx        = 0.0;
+        stop_state.time      = accumulated_time;
+        initial_trajectory.states.push_back( stop_state );
+      }
+      break;
+    }
+
     if( accumulated_time >= max_total_time )
     {
       break;
@@ -205,6 +230,15 @@ generate_trajectory_from_speed_profile( const SpeedProfile& speed_profile, const
 
   if( !std::isfinite( t_final ) || t_final <= 0.0 )
   {
+    // Fully stopped route (e.g. ego already halted at the obstacle / oncoming
+    // wait): return a short route-aligned hold at the first pose instead of an
+    // empty (untracked) trajectory, so the stop needs no fabricated hold.
+    auto hold_state = initial_trajectory.states.front();
+    hold_state.vx   = 0.0;
+    hold_state.time = 0.0;
+    trajectory.states.push_back( hold_state );
+    hold_state.time = time_step;
+    trajectory.states.push_back( hold_state );
     return trajectory;
   }
 

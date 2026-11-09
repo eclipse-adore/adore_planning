@@ -60,7 +60,7 @@ participant_footprint_overlaps_ego_lane(
   // clearly separated opposite lane from triggering unless it overlaps the ego
   // corridor.
   const double corridor_half_width =
-    0.5 * std::max( params.min_vehicle_dimension, ego_params.body_width ) +
+    0.5 * ego_params.body_width +
     params.ego_corridor_safety_margin +
     params.ego_lane_oncoming_lateral_margin;
 
@@ -76,11 +76,6 @@ find_ego_lane_oncoming_threat(
   const dynamics::PhysicalVehicleParameters& ego_params,
   const ObstacleAvoidanceParams& params )
 {
-  if( !params.ego_lane_oncoming_stop_enabled )
-  {
-    return std::nullopt;
-  }
-
   const double ego_s = project_s_on_reference_line( route, ego );
   if( !std::isfinite( ego_s ) )
   {
@@ -94,7 +89,8 @@ find_ego_lane_oncoming_threat(
 
   for( const auto& [id, participant] : traffic_participants.participants )
   {
-    const double participant_speed = std::fabs( participant.state.vx );
+    const double participant_speed =
+      std::hypot( participant.state.vx, participant.state.vy );
     if( participant_speed <= params.max_static_object_speed )
     {
       continue;
@@ -110,11 +106,6 @@ find_ego_lane_oncoming_threat(
     const double participant_near_s = footprint->s_min;
     const double distance_s = participant_near_s - ego_s - ego_front_offset;
 
-    if( distance_s > params.ego_lane_oncoming_max_distance )
-    {
-      continue;
-    }
-
     // Participant has already passed the ego reference point and moves further
     // toward decreasing s. It no longer creates a head-on threat ahead.
     if( footprint->s_max < ego_s )
@@ -124,9 +115,11 @@ find_ego_lane_oncoming_threat(
 
     const auto route_pose = route.get_pose_at_s( footprint->center_s );
     const double yaw_diff = normalize_angle( participant.state.yaw_angle - route_pose.yaw );
-    const double v_route = participant_speed * std::cos( yaw_diff );
+    const double v_route =
+      participant.state.vx * std::cos( yaw_diff ) -
+      participant.state.vy * std::sin( yaw_diff );
 
-    if( v_route >= -params.ego_lane_oncoming_min_route_speed )
+    if( v_route >= -params.min_oncoming_route_speed )
     {
       continue;
     }
@@ -144,40 +137,18 @@ find_ego_lane_oncoming_threat(
       std::max( 0.0, ego.vx ) + std::fabs( v_route );
 
     const double time_to_conflict =
-      std::max( 0.0, distance_s ) /
-      std::max( params.min_motion_speed, closing_speed );
+      std::max( 0.0, distance_s ) / closing_speed;
 
-    if( params.ego_lane_oncoming_time_horizon > 0.0 &&
-        time_to_conflict > params.ego_lane_oncoming_time_horizon )
+    if( params.prediction_time_horizon > 0.0 &&
+        time_to_conflict > params.prediction_time_horizon )
     {
       continue;
     }
 
     EgoLaneOncomingThreat threat;
-    threat.valid = true;
     threat.participant_id = static_cast<int>( id );
     threat.participant_near_s = participant_near_s;
-    threat.participant_center_s = footprint->center_s;
-    threat.distance_s = std::max( 0.0, distance_s );
-    threat.v_route = v_route;
     threat.time_to_conflict = time_to_conflict;
-    threat.stop_s =
-      participant_near_s
-      - params.ego_lane_oncoming_stop_distance
-      - ego_front_offset;
-
-    char buf[256];
-    std::snprintf(
-      buf,
-      sizeof( buf ),
-      "ego-lane oncoming participant id=%d s=%.2f distance=%.2f v_route=%.2f ttc=%.2f stop_s=%.2f",
-      threat.participant_id,
-      threat.participant_center_s,
-      threat.distance_s,
-      threat.v_route,
-      threat.time_to_conflict,
-      threat.stop_s );
-    threat.reason = buf;
 
     if( !best_threat.has_value() ||
         threat.time_to_conflict < best_threat->time_to_conflict )
@@ -213,8 +184,7 @@ compute_opposite_lane_conflict_interval(
     return interval;
   }
 
-  const double ego_half_width =
-    0.5 * std::max( params.min_vehicle_dimension, ego_params.body_width );
+  const double ego_half_width = 0.5 * ego_params.body_width;
 
   const bool shift_left = lateral_shift > 0.0;
 
@@ -223,6 +193,7 @@ compute_opposite_lane_conflict_interval(
   bool map_usable_at_least_once = false;
   bool opposite_lane_present_at_least_once = false;
   bool fallback_used_at_least_once = false;
+  bool evaluated_active_sample = false;
   std::size_t invalid_lane_samples = 0;
 
   double first_conflict_s = std::numeric_limits<double>::infinity();
@@ -262,6 +233,7 @@ compute_opposite_lane_conflict_interval(
     if( opposite_query.map_usable )
     {
       map_usable_at_least_once = true;
+      evaluated_active_sample = true;
 
       if( opposite_query.has_opposite_lane )
       {
@@ -307,6 +279,8 @@ compute_opposite_lane_conflict_interval(
         continue;
       }
 
+      evaluated_active_sample = true;
+
       const bool crosses_left_border =
         shift_left && ego_left_l > current_lane_interval->max_l;
 
@@ -328,10 +302,12 @@ compute_opposite_lane_conflict_interval(
   {
     interval.valid = true;
     interval.occupies_opposite_lane = true;
+    const double spatial_margin =
+      std::max( 0.0, params.oncoming_spatial_margin );
     interval.start_s =
-      std::max( 0.0, first_conflict_s - params.oncoming_safety_distance_rear );
+      std::max( 0.0, first_conflict_s - spatial_margin );
     interval.end_s =
-      last_conflict_s + params.oncoming_safety_distance_front;
+      last_conflict_s + spatial_margin;
     interval.reason =
       opposite_lane_present_at_least_once
         ? "ego footprint enters opposite-direction lane"
@@ -339,7 +315,7 @@ compute_opposite_lane_conflict_interval(
     return interval;
   }
 
-  if( found_active_sample )
+  if( found_active_sample && evaluated_active_sample )
   {
     interval.valid = true;
     interval.occupies_opposite_lane = false;
@@ -472,7 +448,8 @@ compute_ego_clear_time_from_trajectory(
   const dynamics::Trajectory& trajectory,
   double now_time,
   double conflict_end_s,
-  double initial_s_hint )
+  double initial_s_hint,
+  double projection_window )
 {
   if( trajectory.states.empty() || !std::isfinite( now_time ) ||
       !std::isfinite( conflict_end_s ) )
@@ -495,7 +472,7 @@ compute_ego_clear_time_from_trajectory(
         route,
         state,
         std::isfinite( previous_s ) ? previous_s : conflict_end_s,
-        30.0 );
+        std::max( 0.0, projection_window ) );
 
     if( !std::isfinite( state_s ) )
     {
@@ -528,16 +505,16 @@ compute_ego_clear_time_from_trajectory(
  * - Preferred: the longitudinal range of route s values at which the ego
  *   footprint overlaps the lateral interval of an adjacent opposite-direction
  *   driving lane. The first such s becomes conflict_start_s, the last becomes
- *   conflict_end_s, then both are expanded by oncoming_safety_distance_rear /
- *   _front to account for prediction uncertainty.
+ *   conflict_end_s, then both are expanded by oncoming_spatial_margin to
+ *   account for geometry, localization and prediction uncertainty.
  * - If adjacent-lane direction cannot be determined from map data, a right-
  *   hand-traffic fallback flags the same interval whenever the ego footprint
  *   leaves the current lane on the shift side.
  * - If no shifted samples can be evaluated at all, a conservative obstacle-
  *   envelope fallback is used.
  *
- * Route-aligned velocity convention:
- * - v_route = speed * cos(participant_yaw - route_yaw)
+ * Route-aligned velocity convention (participant vx/vy are body-frame):
+ * - v_route = vx*cos(yaw_diff) - vy*sin(yaw_diff)
  * - v_route > 0: participant moves in the ego route direction.
  * - v_route < 0: participant moves against the ego route direction / oncoming.
  *
@@ -547,7 +524,7 @@ compute_ego_clear_time_from_trajectory(
  *   earliest state that lands in [conflict_start_s, conflict_end_s] defines the
  *   arrival time (linearly interpolated between consecutive samples).
  * - Otherwise, a constant-velocity prediction is used with the route-aligned
- *   speed |v_route| floored by min_oncoming_speed_for_gap_check.
+ *   speed |v_route| floored by min_oncoming_route_speed.
  *
  * Decision rule:
  *   arrival_time <= ego_clear_time + oncoming_time_margin -> reject maneuver
@@ -555,6 +532,7 @@ compute_ego_clear_time_from_trajectory(
  */
 planner::OncomingConflictResult
 check_oncoming_gap( const map::Route& route,
+                    const map::Route& driven_route,
                     const dynamics::VehicleStateDynamic& ego,
                     const dynamics::TrafficParticipantSet& traffic_participants,
                     const AvoidanceGroup& group,
@@ -605,12 +583,12 @@ check_oncoming_gap( const map::Route& route,
         0.0,
         group.envelope.object_s_min
         - params.front_clearance
-        - params.oncoming_safety_distance_rear );
+        - params.oncoming_spatial_margin );
 
     result.conflict_end_s =
       group.envelope.object_s_max
       + params.rear_clearance
-      + params.oncoming_safety_distance_front;
+      + params.oncoming_spatial_margin;
 
   }
 
@@ -622,7 +600,8 @@ check_oncoming_gap( const map::Route& route,
         *candidate_ego_trajectory,
         ego.time,
         result.conflict_end_s,
-        ego_s );
+        ego_s,
+        params.route_window_min );
 
     if( trajectory_clear_time.has_value() )
     {
@@ -641,23 +620,25 @@ check_oncoming_gap( const map::Route& route,
       ego_speed = std::min( ego_speed, params.max_speed_during_avoidance );
     }
 
-    ego_speed =
-      std::max( params.min_ego_speed_for_gap_check, ego_speed );
-
-    result.ego_clear_time = conflict_distance / ego_speed;
+    result.ego_clear_time =
+      conflict_distance <= 0.0
+        ? 0.0
+        : ( ego_speed > 0.0
+              ? conflict_distance / ego_speed
+              : std::numeric_limits<double>::infinity() );
   }
 
   bool oncoming_detected = false;
 
   for( const auto& [id, participant] : traffic_participants.participants )
   {
-    const double participant_speed = std::fabs( participant.state.vx );
+    const double participant_speed =
+      std::hypot( participant.state.vx, participant.state.vy );
 
     if( avoidance_group_contains_participant_id(
           group,
           static_cast<int>( id ) ) &&
-        participant_speed <= std::max( params.max_static_object_speed,
-                                       params.ignored_obstacle_release_speed ) )
+        participant_speed <= params.max_static_object_speed )
     {
       continue;
     }
@@ -675,7 +656,9 @@ check_oncoming_gap( const map::Route& route,
     const double yaw_diff =
       normalize_angle( participant.state.yaw_angle - route_yaw );
 
-    const double v_route = participant_speed * std::cos( yaw_diff );
+    const double v_route =
+      participant.state.vx * std::cos( yaw_diff ) -
+      participant.state.vy * std::sin( yaw_diff );
     const bool heading_opposite =
       std::fabs( yaw_diff ) >= params.min_oncoming_heading_diff;
     const auto participant_footprint =
@@ -686,13 +669,33 @@ check_oncoming_gap( const map::Route& route,
             participant_footprint->s_min <= result.conflict_end_s )
         : ( participant_s >= result.conflict_start_s &&
             participant_s <= result.conflict_end_s );
+    const double participant_near_s =
+      participant_footprint.has_value()
+        ? participant_footprint->s_min
+        : participant_s;
+    const double participant_far_s =
+      participant_footprint.has_value()
+        ? participant_footprint->s_max
+        : participant_s;
 
     if( participant_speed <= params.max_static_object_speed ||
         v_route >= -params.min_oncoming_route_speed )
     {
       if( heading_opposite && participant_in_conflict_interval )
       {
-        oncoming_detected = true;
+        // A genuinely stopped participant is a geometric obstacle, not a
+        // time-gap problem. If the candidate route keeps the hard corridor
+        // clear, it leaves usable space and must not reject the maneuver merely
+        // because its formal arrival time in the conflict interval is zero.
+        // Intrusions have already been rejected by the candidate-route safety
+        // check and remain conflicts here as a conservative fallback.
+        if( participant_speed <= params.max_static_object_speed &&
+            participant_keeps_hard_clearance_to_route_corridor(
+              driven_route, participant, ego_params, params ) )
+        {
+          continue;
+        }
+
         result.conflict = true;
         result.participant_id = static_cast<int>( id );
         result.oncoming_arrival_time = 0.0;
@@ -717,21 +720,17 @@ check_oncoming_gap( const map::Route& route,
       // gap-acceptance test with a floored closing speed.
       if( heading_opposite &&
           participant_speed > params.max_static_object_speed &&
-          participant_s > result.conflict_end_s )
+          participant_near_s > result.conflict_end_s )
       {
         const double slow_closing_speed =
-          std::max( params.min_oncoming_speed_for_gap_check, std::fabs( v_route ) );
-        const double slow_front_s =
-          participant_footprint.has_value()
-            ? participant_footprint->s_min
-            : participant_s;
+          std::max( params.min_oncoming_route_speed, std::fabs( v_route ) );
         const double slow_arrival_time =
-          std::max( 0.0, slow_front_s - result.conflict_end_s ) / slow_closing_speed;
+          std::max( 0.0, participant_near_s - result.conflict_end_s ) /
+          slow_closing_speed;
 
         if( slow_arrival_time <=
             result.ego_clear_time + params.oncoming_time_margin )
         {
-          oncoming_detected = true;
           result.conflict = true;
           result.participant_id = static_cast<int>( id );
           result.oncoming_arrival_time = slow_arrival_time;
@@ -761,16 +760,21 @@ check_oncoming_gap( const map::Route& route,
 
     const double oncoming_speed =
       std::max(
-        params.min_oncoming_speed_for_gap_check,
+        params.min_oncoming_route_speed,
         std::fabs( v_route ) );
 
     double arrival_time = std::numeric_limits<double>::infinity();
-    double distance_to_conflict = std::numeric_limits<double>::infinity();
     const char* arrival_source = "constant_velocity";
 
-    bool used_trajectory = false;
+    bool arrival_resolved = false;
 
-    if( participant.trajectory.has_value() &&
+    if( participant_in_conflict_interval )
+    {
+      arrival_time = 0.0;
+      arrival_source = "current_footprint";
+      arrival_resolved = true;
+    }
+    else if( participant.trajectory.has_value() &&
         participant.trajectory->states.size() >= 2 )
     {
       const auto trajectory_arrival =
@@ -784,34 +788,30 @@ check_oncoming_gap( const map::Route& route,
       if( trajectory_arrival.has_value() )
       {
         arrival_time = trajectory_arrival.value();
-        distance_to_conflict = arrival_time * oncoming_speed;
         arrival_source = "trajectory";
-        used_trajectory = true;
+        arrival_resolved = true;
       }
     }
 
-    if( !used_trajectory )
+    if( !arrival_resolved )
     {
-      if( participant_s >= result.conflict_start_s &&
-          participant_s <= result.conflict_end_s )
-      {
-        // The oncoming vehicle is already in the longitudinal interval where ego
-        // would occupy the opposite lane.
-        arrival_time = 0.0;
-        distance_to_conflict = 0.0;
-      }
-      else if( participant_s > result.conflict_end_s )
+      if( participant_near_s > result.conflict_end_s )
       {
         // Oncoming traffic is ahead on the route and moves toward decreasing s.
-        // Therefore the distance to the conflict interval is participant_s - end.
-        distance_to_conflict = participant_s - result.conflict_end_s;
+        // Use its nearest footprint edge, not its center.
+        const double distance_to_conflict =
+          participant_near_s - result.conflict_end_s;
         arrival_time = distance_to_conflict / oncoming_speed;
+      }
+      else if( participant_far_s < result.conflict_start_s )
+      {
+        // The complete footprint has passed the interval and keeps moving away.
+        continue;
       }
       else
       {
-        // participant_s < conflict_start_s and v_route < 0: the participant has
-        // already passed the conflict interval and continues moving away from it.
-        continue;
+        // Projection uncertainty at an interval boundary: fail closed.
+        arrival_time = 0.0;
       }
     }
 
@@ -830,18 +830,6 @@ check_oncoming_gap( const map::Route& route,
       result.conflict = true;
       result.participant_id = static_cast<int>( id );
       result.oncoming_arrival_time = arrival_time;
-
-      if( params.debug_oncoming_check )
-      {
-        result.diagnostics.participant_id = static_cast<int>( id );
-        result.diagnostics.participant_s = participant_s;
-        result.diagnostics.participant_vx = participant.state.vx;
-        result.diagnostics.participant_yaw = participant.state.yaw_angle;
-        result.diagnostics.route_yaw_at_participant_s = route_yaw;
-        result.diagnostics.yaw_diff = yaw_diff;
-        result.diagnostics.v_route = v_route;
-        result.diagnostics.heading_diff_rad = std::fabs( yaw_diff );
-      }
 
       char buf[384];
       std::snprintf(

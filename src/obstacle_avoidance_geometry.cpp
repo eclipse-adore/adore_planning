@@ -5,9 +5,8 @@
  ********************************************************************************/
 
 // Geometry primitives for the obstacle-avoidance module: route-frame
-// construction, angle normalization, route-difference detection and point /
-// reference projection onto the route reference line. Pure functions with no
-// dependency on other obstacle-avoidance internals.
+// construction and point/reference projection onto the route reference line.
+// Pure functions with no dependency on other obstacle-avoidance internals.
 
 #include "obstacle_avoidance_internal.hpp"
 
@@ -38,72 +37,6 @@ smoothstep01( double t )
   // Quintic smootherstep: zero slope and zero curvature at both ends.
   t = std::clamp( t, 0.0, 1.0 );
   return t * t * t * ( t * ( t * 6.0 - 15.0 ) + 10.0 );
-}
-
-bool
-map_points_differ_xy(
-  const adore::map::MapPoint& a,
-  const adore::map::MapPoint& b,
-  const double xy_tolerance )
-{
-  return std::hypot( a.x - b.x, a.y - b.y ) > xy_tolerance;
-}
-
-std::optional<RouteDifferenceBounds>
-find_route_difference_bounds(
-  const adore::map::Route& original_route,
-  const adore::map::Route& modified_route,
-  const double xy_tolerance )
-{
-  RouteDifferenceBounds bounds;
-
-  for( const auto& [s, original_point] : original_route.reference_line )
-  {
-    const auto modified_it = modified_route.reference_line.find( s );
-
-    if( modified_it == modified_route.reference_line.end() )
-    {
-      // If the keys differ, this simple comparison is not valid.
-      // For the current OA implementation this should usually not happen,
-      // because modified_route is a copy of original_route.
-      continue;
-    }
-
-    const bool different =
-      map_points_differ_xy(
-        original_point,
-        modified_it->second,
-        xy_tolerance );
-
-    if( different )
-    {
-      if( !bounds.has_difference )
-      {
-        bounds.first_different_s = s;
-        bounds.has_difference = true;
-      }
-
-      bounds.last_different_s = s;
-
-      // Reset this, because we found a later changed point.
-      bounds.has_equal_point_after_last_difference = false;
-      bounds.first_equal_s_after_last_difference = 0.0;
-    }
-    else if( bounds.has_difference &&
-             !bounds.has_equal_point_after_last_difference )
-    {
-      // This is the first equal point after the currently last changed point.
-      bounds.first_equal_s_after_last_difference = s;
-      bounds.has_equal_point_after_last_difference = true;
-    }
-  }
-
-  if( !bounds.has_difference )
-  {
-    return std::nullopt;
-  }
-
-  return bounds;
 }
 
 RouteFrame
