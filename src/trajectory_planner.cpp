@@ -95,7 +95,7 @@ TrajectoryPlanner::get_planning_model( const dynamics::PhysicalVehicleParameters
 mas::StageCostFunction
 TrajectoryPlanner::make_trajectory_cost( const dynamics::Trajectory& ref_traj )
 {
-  return [start_state = start_state, ref_traj = ref_traj, weights = weights, dt = dt]( const mas::State& x, const mas::Control& u,
+  return [start_state = start_state, ref_traj = ref_traj, weights = weights, max_allowed_speed = max_allowed_speed, dt = dt]( const mas::State& x, const mas::Control& u,
                                                                                        std::size_t k ) -> double {
     double cost = 0.0;
 
@@ -111,7 +111,7 @@ TrajectoryPlanner::make_trajectory_cost( const dynamics::Trajectory& ref_traj )
     const double lon_err = dx * c + dy * s;
     const double lat_err = -dx * s + dy * c;
     const double hdg_err = math::normalize_angle( x( 2 ) - ref.yaw_angle );
-    const double spd_err = x( 3 ) - ref.vx;
+    const double spd_err = x( 3 ) - std::min( ref.vx, max_allowed_speed );
 
     cost += weights.lane_error * lat_err * lat_err;
     cost += weights.long_error * lon_err * lon_err;
@@ -125,8 +125,18 @@ TrajectoryPlanner::make_trajectory_cost( const dynamics::Trajectory& ref_traj )
 dynamics::Trajectory
 TrajectoryPlanner::plan_route_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                           const dynamics::TrafficParticipantSet& traffic_participants,
+                                          const std::optional<double>& max_speed,
                                           const dynamics::TrafficSignalSet&      traffic_signals )
 {
+  if( max_speed.has_value() )
+  {
+    max_allowed_speed = std::max( max_speed.value(), current_state.vx - 0.5 );
+  }
+  else
+  {
+    max_allowed_speed = comfort_settings.max_speed;
+  }
+  std::cerr << "objects received in planner: " << traffic_participants.participants.size() << std::endl;
   return plan_route_trajectory_with_custom_comfort_settings( latest_route, current_state, traffic_participants, comfort_settings,
                                                              traffic_signals );
 }
@@ -179,12 +189,14 @@ TrajectoryPlanner::plan_route_trajectory_impl( const map::Route& latest_route, c
 
   if( ref_traj.states.size() < 1 )
   {
+    std::cerr << "reached here danger" << std::endl;
     dynamics::VehicleStateDynamic empty_state;
     empty_state.x  = current_state.x;
     empty_state.y  = current_state.y;
     empty_state.vx = 0.0;
     ref_traj.states.assign( 3, empty_state );
   }
+
 
   // PID-based initial guess
   controllers::PurePursuit pid;

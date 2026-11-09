@@ -293,7 +293,7 @@ try_plan_obstacle_avoidance( TrajectoryPlanner& planner,
       stop_result.trajectory = planner.plan_route_trajectory(
         stop_result.modified_route,
         ego,
-        traffic_participants );
+        traffic_participants, std::nullopt );
     }
     catch( const std::exception& e )
     {
@@ -337,7 +337,7 @@ try_plan_obstacle_avoidance( TrajectoryPlanner& planner,
         stop_result.trajectory = planner.plan_route_trajectory(
           stop_result.modified_route,
           ego,
-          traffic_participants );
+          traffic_participants, std::nullopt );
       }
       catch( const std::exception& e )
       {
@@ -958,7 +958,7 @@ try_plan_ego_lane_oncoming_stop( TrajectoryPlanner& planner,
     result.trajectory = planner.plan_route_trajectory(
       result.modified_route,
       ego,
-      traffic_participants );
+      traffic_participants, std::nullopt );
   }
   catch( const std::exception& e )
   {

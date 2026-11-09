@@ -47,6 +47,7 @@ public:
 
   dynamics::Trajectory plan_route_trajectory( const map::Route& latest_route, const dynamics::VehicleStateDynamic& current_state,
                                               const dynamics::TrafficParticipantSet& traffic_participants,
+                                              const std::optional<double>& max_speed,
                                               const dynamics::TrafficSignalSet&      traffic_signals = {} );
 
   dynamics::Trajectory plan_route_trajectory_with_custom_comfort_settings( const map::Route&                      latest_route,
@@ -110,6 +111,8 @@ private:
 
   dynamics::PhysicalVehicleParameters vehicle_params;
   dynamics::ComfortSettings           comfort_settings;
+
+  double max_allowed_speed = 10.;
 
 
   void                   setup_problem();
